@@ -230,12 +230,17 @@ function exchange() {
         },
 
         async init() {
+            await this.fetchRate();
+            setInterval(() => this.fetchRate(), 30000);
+            await this.loadAddresses();
+            this.loaded = true;
+        },
+
+        async fetchRate() {
             try {
                 const r = await fetch('/api/rate').then(r => r.json());
                 if (r.btc_usd > 0) this.rate = r;
             } catch(e) {}
-            await this.loadAddresses();
-            this.loaded = true;
         },
 
         async loadAddresses() {
