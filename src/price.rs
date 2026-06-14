@@ -4,12 +4,14 @@ use serde::Deserialize;
 
 use crate::error::Result;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct Prices {
     pub btc_usd: f64,
     pub fee_rate_sat_per_vb: f64,
 }
 
+#[allow(dead_code)]
 pub struct PriceFeed {
     client: reqwest::Client,
     btc_price_cache: Option<(Prices, Instant)>,
@@ -17,15 +19,18 @@ pub struct PriceFeed {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct BinancePrice {
     price: String,
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 struct MempoolFee {
     fastest_fee: f64,
 }
 
+#[allow(dead_code)]
 impl PriceFeed {
     pub fn new(client: reqwest::Client) -> Self {
         PriceFeed { client, btc_price_cache: None, cache_ttl_secs: 30 }

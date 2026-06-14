@@ -12,6 +12,7 @@ pub enum Kum4Error {
     Network(String),
 
     #[error("RPC error: {0}")]
+    #[allow(dead_code)]
     Rpc(String),
 
     #[error("Bitcoin error: {0}")]
@@ -30,6 +31,7 @@ pub enum Kum4Error {
     Io(#[from] std::io::Error),
 
     #[error("Parse error: {0}")]
+    #[allow(dead_code)]
     Parse(String),
 
     #[error("Serde JSON error: {0}")]
@@ -45,7 +47,11 @@ pub enum Kum4Error {
     Dht(String),
 
     #[error("P2P error: {0}")]
+    #[allow(dead_code)]
     P2p(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 pub type Result<T> = std::result::Result<T, Kum4Error>;

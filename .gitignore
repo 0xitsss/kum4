@@ -2,3 +2,6 @@
 .env
 docs/
 kum4_data/
+*.log
+kum4
+key.kum4

@@ -8,12 +8,14 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
+use crate::database::Database;
 use crate::error::{Kum4Error, Result};
 use crate::p2p::P2pState;
 use crate::wallet::Wallet;
 
 pub struct AppState {
-    pub wallet: Wallet,
+    pub wallet: Arc<Wallet>,
+    pub db: Database,
     pub config: Config,
     pub mempool_url: String,
     pub peer_id: String,
@@ -25,12 +27,15 @@ pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/", get(index))
         .route("/api/rate", get(api_rate))
-        .route("/api/addresses", get(api_addresses))
+        // .route("/api/addresses", get(api_addresses))
         .route("/api/calculate", post(api_calculate))
         .route("/api/health", get(api_health))
         .route("/api/p2p/reserve", get(p2p_reserve_handler))
         .route("/api/p2p/redirect", post(p2p_redirect_handler))
         .route("/api/reserve", post(api_set_reserve))
+        .route("/api/exchange", post(api_create_exchange))
+        .route("/api/exchange/:id", get(api_get_exchange))
+        .route("/exchange/:id", get(exchange_page))
         .with_state(state)
 }
 
@@ -43,7 +48,6 @@ struct RateResponse {
     btc_usd: f64,
     fee_rate: f64,
     profit_fee_usd: f64,
-    min_usdt: f64,
 }
 
 async fn api_rate(State(state): State<Arc<AppState>>) -> Json<RateResponse> {
@@ -52,31 +56,7 @@ async fn api_rate(State(state): State<Arc<AppState>>) -> Json<RateResponse> {
         btc_usd,
         fee_rate,
         profit_fee_usd: state.config.profit_fee_usd,
-        min_usdt: state.config.min_usdt_amount,
     })
-}
-
-#[derive(Serialize)]
-struct AddressesResponse {
-    tron: Vec<String>,
-    bsc: Vec<String>,
-    btc: Vec<String>,
-}
-
-async fn api_addresses(State(state): State<Arc<AppState>>) -> Result<Json<AddressesResponse>> {
-    let tron = (0..5)
-        .map(|i| state.wallet.tron_address_at_index(i))
-        .filter_map(|r| r.ok())
-        .collect();
-    let bsc = (0..5)
-        .map(|i| state.wallet.eth_address_at_index(i))
-        .filter_map(|r| r.ok())
-        .collect();
-    let btc = (0..5)
-        .map(|i| state.wallet.btc_address(i).map(|a| a.to_string()))
-        .filter_map(|r| r.ok())
-        .collect();
-    Ok(Json(AddressesResponse { tron, bsc, btc }))
 }
 
 #[derive(Deserialize)]
@@ -230,6 +210,7 @@ struct P2pRedirectBody {
     usdt_amount: f64,
     chain: String,
     user_btc_address: String,
+    #[allow(dead_code)]
     deposit_txid: String,
 }
 
@@ -290,6 +271,114 @@ async fn fetch_price(mempool_url: &str) -> std::result::Result<(f64, f64), Strin
     let fee_rate = fee_data["fastestFee"].as_f64().unwrap_or(50.0);
 
     Ok((btc_usd, fee_rate))
+}
+
+#[derive(Deserialize)]
+struct CreateExchangeBody {
+    chain: String,
+    btc_address: String,
+    usdt_amount: f64,
+}
+
+#[derive(Serialize)]
+struct CreateExchangeResponse {
+    id: String,
+    chain: String,
+    deposit_address: String,
+    btc_address: String,
+    status: String,
+    created_at: u64,
+    expires_at: u64,
+}
+
+async fn api_create_exchange(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<CreateExchangeBody>,
+) -> Result<Json<CreateExchangeResponse>> {
+    if body.btc_address.trim().is_empty() {
+        return Err(Kum4Error::Config("BTC address is required".into()));
+    }
+    if body.usdt_amount < state.config.min_usdt_amount {
+        return Err(Kum4Error::Config(format!(
+            "Minimum {} USDT", state.config.min_usdt_amount
+        )));
+    }
+    let chain = if body.chain == "bsc" { "bsc" } else { "tron" };
+
+    // Fetch price to calculate expected BTC amount
+    let (btc_price, fee_rate) = fetch_price(&state.mempool_url).await
+        .unwrap_or((0.0, 50.0));
+
+    let profit_fee = state.config.profit_fee_usd;
+    let tx_vbytes = 150.0;
+    let gas_sats = fee_rate * tx_vbytes;
+    let gas_usd = gas_sats * btc_price / 100_000_000.0;
+    let total_fee = profit_fee + gas_usd;
+    let net = body.usdt_amount - total_fee;
+    let expected_btc = if btc_price > 0.0 && net > 0.0 { net / btc_price } else { 0.0 };
+
+    // Allocate next unique address for this exchange
+    let idx = state.db.addr_index(chain)?;
+    let deposit_address = match chain {
+        "tron" => state.wallet.tron_address_at_index(idx)?,
+        "bsc" => state.wallet.eth_address_at_index(idx)?,
+        _ => return Err(Kum4Error::Config("Invalid chain".into())),
+    };
+    state.db.advance_addr_index(chain)?;
+
+    let req = state.db.create_exchange(chain, &deposit_address, &body.btc_address, body.usdt_amount, expected_btc)?;
+
+    tracing::info!(
+        exchange_id = %req.id, chain = %chain,
+        deposit = %deposit_address, btc = %body.btc_address,
+        "Exchange created"
+    );
+
+    Ok(Json(CreateExchangeResponse {
+        id: req.id,
+        chain: req.chain,
+        deposit_address: req.deposit_address,
+        btc_address: req.btc_address,
+        status: req.status,
+        created_at: req.created_at,
+        expires_at: req.expires_at,
+    }))
+}
+
+#[derive(Serialize)]
+struct ExchangeStatusResponse {
+    id: String,
+    chain: String,
+    deposit_address: String,
+    btc_address: String,
+    status: String,
+    usdt_amount: Option<f64>,
+    btc_amount: Option<f64>,
+    created_at: u64,
+    expires_at: u64,
+}
+
+async fn api_get_exchange(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Result<Json<ExchangeStatusResponse>> {
+    let req = state.db.get_exchange(&id)?
+        .ok_or_else(|| Kum4Error::Internal("Exchange not found".into()))?;
+    Ok(Json(ExchangeStatusResponse {
+        id: req.id,
+        chain: req.chain,
+        deposit_address: req.deposit_address,
+        btc_address: req.btc_address,
+        status: req.status,
+        usdt_amount: req.usdt_amount,
+        btc_amount: req.btc_amount,
+        created_at: req.created_at,
+        expires_at: req.expires_at,
+    }))
+}
+
+async fn exchange_page() -> Html<&'static str> {
+    Html(include_str!("../templates/exchange.html"))
 }
 
 impl axum::response::IntoResponse for Kum4Error {

@@ -6,7 +6,7 @@ use crate::error::{Kum4Error, Result};
 pub struct Config {
     pub tron_rpc_url: String,
     pub bsc_rpc_url: String,
-    pub seed_phrase: String,
+    pub key_path: String,
     pub min_usdt_amount: f64,
     pub profit_fee_usd: f64,
     pub rebalance_threshold: f64,
@@ -32,9 +32,9 @@ impl Config {
                 .unwrap_or_else(|_| "https://api.trongrid.io".into()),
             bsc_rpc_url: env::var("BSC_RPC_URL")
                 .unwrap_or_else(|_| "https://bsc-dataseed.binance.org".into()),
-            seed_phrase: Self::require("SEED_PHRASE")?,
+            key_path: env::var("KEY_PATH").unwrap_or_else(|_| "key.kum4".into()),
             min_usdt_amount: env::var("MIN_USDT_AMOUNT")
-                .unwrap_or_else(|_| "10.0".into())
+                .unwrap_or_else(|_| "0.0".into())
                 .parse()
                 .map_err(|e| Kum4Error::Config(format!("MIN_USDT_AMOUNT parse: {e}")))?,
             profit_fee_usd: env::var("PROFIT_FEE_USD")
@@ -67,10 +67,6 @@ impl Config {
         };
 
         Ok(cfg)
-    }
-
-    fn require(key: &str) -> Result<String> {
-        env::var(key).map_err(|_| Kum4Error::Config(format!("Missing required env var: {key}")))
     }
 
     pub fn btc_network_bitcoin(&self) -> bitcoin::Network {

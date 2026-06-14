@@ -21,6 +21,7 @@ pub struct NodeInfo {
     pub status: String,
 }
 
+#[allow(dead_code)]
 impl NodeInfo {
     pub fn to_record(&self) -> Vec<u8> {
         serde_json::to_vec(self).unwrap_or_default()
@@ -32,6 +33,7 @@ impl NodeInfo {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum DhtCmd {
     Bootstrap,
     Announce {
@@ -50,6 +52,7 @@ pub enum DhtEvent {
         listen_addrs: Vec<Multiaddr>,
     },
     ValueFound {
+        #[allow(dead_code)]
         key: Vec<u8>,
         value: Option<Vec<u8>>,
     },
@@ -57,6 +60,7 @@ pub enum DhtEvent {
         num_peers: usize,
     },
     Announced,
+    #[allow(dead_code)]
     Error(String),
 }
 
@@ -105,6 +109,7 @@ impl DhtNode {
         &self.peer_id
     }
 
+    #[allow(dead_code)]
     pub fn listen_addrs(&self) -> Vec<Multiaddr> {
         self.swarm.listeners().cloned().collect()
     }
@@ -149,58 +154,55 @@ impl DhtNode {
     }
 
     async fn handle_kad(&mut self, event: kad::Event) {
-        match event {
-            kad::Event::OutboundQueryProgressed { result, .. } => match result {
-                kad::QueryResult::GetRecord(Ok(kad::GetRecordOk::FoundRecord(pr))) => {
-                    tracing::info!("DHT record found");
-                    let _ = self
-                        .event_tx
-                        .send(DhtEvent::ValueFound {
-                            key: pr.record.key.as_ref().to_vec(),
-                            value: Some(pr.record.value),
-                        })
-                        .await;
-                }
-                kad::QueryResult::GetRecord(Ok(kad::GetRecordOk::FinishedWithNoAdditionalRecord { .. })) => {
-                    tracing::info!("DHT record lookup finished, no more records");
-                    let _ = self
-                        .event_tx
-                        .send(DhtEvent::ValueFound {
-                            key: vec![],
-                            value: None,
-                        })
-                        .await;
-                }
-                kad::QueryResult::GetRecord(Err(e)) => {
-                    tracing::warn!("DHT GetRecord error: {e}");
-                }
-                kad::QueryResult::PutRecord(Ok(_)) => {
-                    tracing::info!("DHT record stored");
-                    let _ = self.event_tx.send(DhtEvent::Announced).await;
-                }
-                kad::QueryResult::PutRecord(Err(e)) => {
-                    tracing::warn!("DHT PutRecord error: {e}");
-                }
-                kad::QueryResult::Bootstrap(Ok(report)) => {
-                    tracing::info!(
-                        "DHT bootstrapped via {}, {} remaining",
-                        report.peer,
-                        report.num_remaining
-                    );
-                    let _ = self
-                        .event_tx
-                        .send(DhtEvent::Bootstrapped {
-                            num_peers: report.num_remaining as usize,
-                        })
-                        .await;
-                }
-                kad::QueryResult::Bootstrap(Err(e)) => {
-                    tracing::warn!("DHT bootstrap error: {e}");
-                }
-                _ => {}
-            },
+        if let kad::Event::OutboundQueryProgressed { result, .. } = event { match result {
+            kad::QueryResult::GetRecord(Ok(kad::GetRecordOk::FoundRecord(pr))) => {
+                tracing::info!("DHT record found");
+                let _ = self
+                    .event_tx
+                    .send(DhtEvent::ValueFound {
+                        key: pr.record.key.as_ref().to_vec(),
+                        value: Some(pr.record.value),
+                    })
+                    .await;
+            }
+            kad::QueryResult::GetRecord(Ok(kad::GetRecordOk::FinishedWithNoAdditionalRecord { .. })) => {
+                tracing::info!("DHT record lookup finished, no more records");
+                let _ = self
+                    .event_tx
+                    .send(DhtEvent::ValueFound {
+                        key: vec![],
+                        value: None,
+                    })
+                    .await;
+            }
+            kad::QueryResult::GetRecord(Err(e)) => {
+                tracing::warn!("DHT GetRecord error: {e}");
+            }
+            kad::QueryResult::PutRecord(Ok(_)) => {
+                tracing::info!("DHT record stored");
+                let _ = self.event_tx.send(DhtEvent::Announced).await;
+            }
+            kad::QueryResult::PutRecord(Err(e)) => {
+                tracing::warn!("DHT PutRecord error: {e}");
+            }
+            kad::QueryResult::Bootstrap(Ok(report)) => {
+                tracing::info!(
+                    "DHT bootstrapped via {}, {} remaining",
+                    report.peer,
+                    report.num_remaining
+                );
+                let _ = self
+                    .event_tx
+                    .send(DhtEvent::Bootstrapped {
+                        num_peers: report.num_remaining as usize,
+                    })
+                    .await;
+            }
+            kad::QueryResult::Bootstrap(Err(e)) => {
+                tracing::warn!("DHT bootstrap error: {e}");
+            }
             _ => {}
-        }
+        } }
     }
 
     fn handle_cmd(&mut self, cmd: DhtCmd) {
@@ -211,7 +213,7 @@ impl DhtNode {
             DhtCmd::Announce { key, value } => {
                 let record = kad::Record {
                     key: kad::RecordKey::new(&key),
-                    value: value.into(),
+                    value,
                     publisher: None,
                     expires: None,
                 };

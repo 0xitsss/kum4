@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Kum4Error, Result};
 use crate::price::Prices;
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UtxoEntry {
     pub txid: String,
@@ -17,11 +18,13 @@ pub struct UtxoEntry {
     pub script_pubkey: String,
 }
 
+#[allow(dead_code)]
 pub struct BitcoinTxBuilder {
     network: Network,
     client: reqwest::Client,
 }
 
+#[allow(dead_code)]
 impl BitcoinTxBuilder {
     pub fn new(network: Network) -> Self {
         BitcoinTxBuilder { network, client: reqwest::Client::new() }
@@ -30,7 +33,7 @@ impl BitcoinTxBuilder {
     pub fn estimate_tx_vbytes(input_count: usize, output_count: usize) -> u64 {
         let base_weight = 4 * (8 + 1 + output_count * 34 + input_count * (1 + 36));
         let witness_weight = input_count * (1 + 73 + 1 + 33);
-        ((base_weight + witness_weight + 3) / 4) as u64
+        (base_weight + witness_weight).div_ceil(4) as u64
     }
 
     pub fn calculate_payout(
@@ -53,7 +56,7 @@ impl BitcoinTxBuilder {
         let mut selected = Vec::new();
         let mut total = 0u64;
         let mut sorted = utxos.to_vec();
-        sorted.sort_by(|a, b| b.value.cmp(&a.value));
+        sorted.sort_by_key(|a| std::cmp::Reverse(a.value));
         for utxo in &sorted {
             if total >= target_sats {
                 break;
@@ -115,14 +118,13 @@ impl BitcoinTxBuilder {
         let secp = secp256k1::Secp256k1::new();
         let wpubkey_hash = pub_key.wpubkey_hash();
         let script_code = ScriptBuf::p2wpkh_script_code(wpubkey_hash);
-        let input_count = tx.input.len();
         let mut cache = SighashCache::new(&mut *tx);
 
-        for i in 0..input_count {
+        for (i, utxo) in selected_utxos.iter().enumerate() {
             let sighash = cache.p2wpkh_signature_hash(
                 i,
                 &script_code,
-                Amount::from_sat(selected_utxos[i].value),
+                Amount::from_sat(utxo.value),
                 EcdsaSighashType::All,
             )?;
             let msg = secp256k1::Message::from_digest_slice(&sighash[..])

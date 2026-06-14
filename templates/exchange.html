@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Kum4 — Exchange</title>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3/dist/cdn.min.js"></script>
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#06060b;--surface:#0d0d18;--surface2:#12121f;--border:#1c1c30;--border2:#2a2a45;--text:#e8e8f0;--text2:#8888a0;--accent:#f7931a;--accent2:#ffa940;--green:#22c55e;--red:#ef4444;--blue:#3b82f6;--radius:12px;--radius-lg:20px}
+[x-cloak]{display:none!important}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellipse 80% 60% at 50% -20%,rgba(247,147,26,0.06),transparent);pointer-events:none;z-index:0}
+.container{max-width:480px;margin:0 auto;padding:20px 12px;position:relative;z-index:1}
+
+#bg-canvas{position:fixed;inset:0;z-index:0;pointer-events:none}
+@keyframes fadeSlide{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
+@keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+.logo-inner{display:inline-flex;align-items:center;white-space:nowrap}
+.quad-text{color:var(--accent);font-weight:800}
+@keyframes scaleIn{from{opacity:0;transform:scale(0.92)}to{opacity:1;transform:scale(1)}}
+@keyframes glow{0%,100%{box-shadow:0 0 12px rgba(247,147,26,0.15)}50%{box-shadow:0 0 28px rgba(247,147,26,0.3)}}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+@keyframes dotPulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:0.5;transform:scale(0.8)}}
+
+.header{text-align:center;padding:28px 0 8px;animation:fadeSlide 0.6s ease-out}
+.header .logo{font-size:22px;font-weight:800;letter-spacing:-0.5px;display:flex;align-items:center;justify-content:center;gap:8px;text-decoration:none;color:var(--text)}
+.subtitle{font-size:11px;color:var(--text2);margin-top:4px;letter-spacing:0.3px}
+
+.status-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px;margin:16px 0;text-align:center;animation:fadeSlide 0.6s ease-out 0.1s both}
+.status-icon{font-size:40px;margin-bottom:8px;display:block;animation:scaleIn 0.5s ease}
+.status-icon.pending{animation:glow 2s ease-in-out infinite;border-radius:50%}
+.status-icon.done{animation:scaleIn 0.5s ease}
+.status-label{font-size:16px;font-weight:700;margin-bottom:3px}
+.status-label.pending{color:var(--accent2)}
+.status-label.detected{color:var(--blue)}
+.status-label.done{color:var(--green)}
+.status-desc{font-size:12px;color:var(--text2);line-height:1.5}
+.status-dots{display:flex;justify-content:center;gap:4px;margin-top:8px}
+.status-dots span{width:6px;height:6px;border-radius:50%;background:var(--border2);transition:all 0.3s}
+.status-dots span.active{background:var(--accent);animation:pulse 1.5s ease-in-out infinite}
+.status-dots span.done{background:var(--green)}
+
+.timer-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;margin-bottom:14px;display:flex;align-items:center;justify-content:center;gap:12px;animation:fadeSlide 0.6s ease-out 0.15s both;font-variant-numeric:tabular-nums}
+.timer-card .t-icon{font-size:18px}
+.timer-card .t-val{font-size:22px;font-weight:700;letter-spacing:1px;color:var(--accent)}
+.timer-card .t-label{font-size:11px;color:var(--text2)}
+.timer-card .t-sep{margin:0 4px;color:var(--text2)}
+
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px;margin-bottom:14px;animation:fadeSlide 0.5s ease-out both}
+.card:nth-child(3){animation-delay:0.2s}
+.card:nth-child(4){animation-delay:0.25s}
+.card-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.8px;color:var(--text2);margin-bottom:14px;display:flex;align-items:center;gap:8px}
+.card-title .icon{font-size:15px}
+.detail-row{display:flex;justify-content:space-between;align-items:flex-start;padding:7px 0;font-size:13px;gap:12px}
+.detail-row+.detail-row{border-top:1px solid var(--border)}
+.detail-row.lbl{color:var(--text2)}
+.detail-row .val{color:var(--text);text-align:right;word-break:break-all;font-weight:500;max-width:260px}
+.detail-row .val.addr{font-family:'SF Mono','Fira Code',Consolas,monospace;font-size:11px;color:var(--text2)}
+.detail-row .val.accent{color:var(--accent)}
+.detail-row .val.green{color:var(--green)}
+.copy-btn{background:none;border:none;color:var(--accent);cursor:pointer;font-size:11px;padding:0 0 0 6px;transition:opacity 0.2s;flex-shrink:0}
+.copy-btn:hover{opacity:0.7}
+
+.timeline{position:relative;padding-left:28px}
+.timeline::before{content:'';position:absolute;left:10px;top:8px;bottom:8px;width:2px;background:var(--border);border-radius:1px}
+.timeline-step{position:relative;padding:8px 0 8px 16px;font-size:13px;color:var(--text2);transition:color 0.3s}
+.timeline-step::before{content:'';position:absolute;left:-22px;top:14px;width:10px;height:10px;border-radius:50%;background:var(--border);border:2px solid var(--bg);transition:all 0.3s}
+.timeline-step.active{color:var(--text)}
+.timeline-step.active::before{background:var(--accent);box-shadow:0 0 8px rgba(247,147,26,0.4)}
+.timeline-step.done{color:var(--green)}
+.timeline-step.done::before{background:var(--green);box-shadow:0 0 8px rgba(34,197,94,0.4)}
+.timeline-step .ts-label{font-weight:600}
+.timeline-step .ts-desc{font-size:11px;color:var(--text2);margin-top:2px}
+
+.refresh-bar{display:flex;align-items:center;justify-content:center;gap:6px;padding:8px;font-size:11px;color:var(--text2);margin-bottom:10px;animation:fadeIn 0.5s}
+.refresh-bar .r-dot{width:5px;height:5px;border-radius:50%;background:var(--text2);animation:pulse 2s ease-in-out infinite}
+
+.back-link{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--text2);text-decoration:none;padding:8px 0;transition:color 0.2s;animation:fadeSlide 0.5s 0.3s both}
+.back-link:hover{color:var(--accent)}
+
+.footer{text-align:center;padding:20px 0 28px;font-size:11px;color:var(--text2)}
+.footer a{color:var(--accent);text-decoration:none}
+.footer a:hover{opacity:0.8}
+
+.error-card{background:linear-gradient(135deg,rgba(239,68,68,0.06),rgba(239,68,68,0.02));border:1px solid rgba(239,68,68,0.15);border-radius:var(--radius-lg);padding:24px;text-align:center;margin:16px 0;animation:scaleIn 0.3s ease}
+.toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(80px);background:var(--surface);border:1px solid var(--border2);border-radius:10px;padding:12px 20px;font-size:13px;color:var(--text);z-index:200;opacity:0;transition:all 0.4s cubic-bezier(0.34,1.56,0.64,1);pointer-events:none;box-shadow:0 8px 32px rgba(0,0,0,0.4);display:flex;align-items:center;gap:8px;white-space:nowrap}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.error-card .e-icon{font-size:36px;margin-bottom:8px}
+.error-card .e-msg{font-size:13px;color:var(--red);margin-bottom:4px}
+.error-card .e-sub{font-size:11px;color:var(--text2)}
+
+.skeleton{background:linear-gradient(90deg,var(--surface2) 25%,var(--border) 50%,var(--surface2) 75%);background-size:200% 100%;animation:shimmer 1.5s infinite;border-radius:6px}
+.skeleton-line{height:14px;width:100%;margin-bottom:8px}
+.skeleton-line:last-child{width:60%}
+.skeleton-box{height:40px;width:100%;border-radius:10px;margin-bottom:8px}
+
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:var(--bg)}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+@media(max-width:420px){.container{padding:12px 8px}}
+</style>
+</head>
+<body x-data="app()" x-init="init()">
+
+<canvas id="bg-canvas"></canvas>
+
+<div class="container">
+    <a href="/" class="back-link">← Back to Kum4</a>
+
+    <div class="header">
+        <div class="logo">
+            <svg width="24" height="24" viewBox="0 0 28 28" fill="none" style="flex-shrink:0">
+                <rect x="2" y="2" width="24" height="24" rx="8" stroke="#f7931a" stroke-width="2.5"/>
+                <path d="M14 8C10.686 8 8 9.79 8 12.5c0 2.71 2.686 3.5 6 3.5s6 .79 6 3.5c0 2.71-2.686 4.5-6 4.5" stroke="#f7931a" stroke-width="2" stroke-linecap="round"/>
+                <path d="M14 6v2M14 20v2" stroke="#f7931a" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            <span class="logo-inner">Kum<span class="quad-text">Quad</span></span>
+        </div>
+        <div class="subtitle" x-text="'Exchange #' + exchangeId"></div>
+    </div>
+
+    <template x-if="loading">
+        <div><div class="skeleton skeleton-box"></div><div class="skeleton skeleton-line" style="width:80%"></div><div class="skeleton skeleton-box"></div><div class="skeleton skeleton-line"></div><div class="skeleton skeleton-line"></div></div>
+    </template>
+
+    <template x-if="!loading && error">
+        <div class="error-card">
+            <div class="e-icon">🔍</div>
+            <div class="e-msg" x-text="error"></div>
+            <div class="e-sub">Check the exchange ID or <a href="/" style="color:var(--accent)">create a new one</a>.</div>
+        </div>
+    </template>
+
+    <div x-show="!loading && !error && data" x-cloak>
+        <!-- Status -->
+        <div class="status-card">
+            <span class="status-icon" :class="statusIconClass" x-text="statusIcon"></span>
+            <div class="status-label" :class="statusClass" x-text="statusLabel"></div>
+            <div class="status-desc" x-text="statusDesc"></div>
+            <div class="status-dots" x-show="data.status === 'pending'">
+                <span class="active"></span><span></span><span></span>
+            </div>
+        </div>
+
+        <!-- Timer -->
+        <div class="timer-card" x-show="data.status === 'pending'">
+            <span class="t-icon">⏳</span>
+            <div>
+                <div class="t-val">
+                    <span x-text="timerH"></span><span class="t-sep">:</span>
+                    <span x-text="timerM"></span><span class="t-sep">:</span>
+                    <span x-text="timerS"></span>
+                </div>
+                <div class="t-label">Time remaining to send deposit</div>
+            </div>
+        </div>
+
+        <!-- Details -->
+        <div class="card">
+            <div class="card-title"><span class="icon">📋</span> Exchange Details</div>
+            <div class="detail-row">
+                <span class="lbl">Network</span>
+                <span class="val accent" x-text="data.chain === 'tron' ? 'TRC-20 (Tron)' : 'BEP-20 (BSC)'"></span>
+            </div>
+            <div style="background:var(--bg);border:1px solid var(--border);border-radius:10px;padding:12px;margin:10px 0">
+                <div style="font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:5px">Deposit address — send USDT here</div>
+                <div style="display:flex;align-items:center;gap:6px">
+                    <code style="flex:1;font-size:13px;color:var(--accent);word-break:break-all;font-family:'SF Mono','Fira Code',Consolas,monospace;font-weight:600" x-text="data.deposit_address"></code>
+                    <button @click="copy(data.deposit_address, $el)" style="flex-shrink:0;background:var(--surface2);border:1px solid var(--border2);border-radius:8px;color:var(--text2);cursor:pointer;padding:5px 10px;font-size:11px;transition:all 0.2s" x-text="copied === data.deposit_address ? '✓ Copied' : '📋 Copy'" :style="copied === data.deposit_address ? 'background:var(--green);color:#000;border-color:var(--green)' : ''"></button>
+                </div>
+            </div>
+            <div class="detail-row" x-show="data.usdt_amount">
+                <span class="lbl">USDT received</span>
+                <span class="val accent" x-text="data.usdt_amount.toFixed(2) + ' USDT'"></span>
+            </div>
+            <div class="detail-row" x-show="data.btc_amount">
+                <span class="lbl">BTC to send</span>
+                <span class="val green" x-text="data.btc_amount.toFixed(8) + ' BTC'"></span>
+            </div>
+            <div class="detail-row">
+                <span class="lbl">Your BTC address</span>
+                <span class="val addr" x-text="data.btc_address"></span>
+            </div>
+            <div class="detail-row">
+                <span class="lbl">Created</span>
+                <span class="val" x-text="fmtTime(data.created_at)"></span>
+            </div>
+        </div>
+
+        <!-- Timeline -->
+        <div class="card">
+            <div class="card-title"><span class="icon">📌</span> Status</div>
+            <div class="timeline">
+                <div class="timeline-step" :class="tlStep(0)">
+                    <div class="ts-label">Exchange created</div>
+                    <div class="ts-desc" x-text="fmtTime(data.created_at)"></div>
+                </div>
+                <div class="timeline-step" :class="tlStep(1)">
+                    <div class="ts-label" x-text="data.status === 'pending' ? 'Awaiting deposit' : 'USDT deposit detected'"></div>
+                    <div class="ts-desc" x-text="data.status === 'pending' ? 'Send USDT to the address above' : 'Deposit confirmed on-chain'"></div>
+                </div>
+                <div class="timeline-step" :class="tlStep(2)">
+                    <div class="ts-label">BTC sent to your wallet</div>
+                    <div class="ts-desc">Check your BTC address for incoming funds</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="refresh-bar" x-show="!loading && !error && data && data.status === 'pending'">
+        <span class="r-dot"></span>
+        <span>Auto-refreshing every 10s</span>
+    </div>
+
+    <div class="toast" :class="{ show: toastShow }">
+        <span class="t-icon" x-text="toastIcon"></span>
+        <span x-text="toastMsg"></span>
+    </div>
+
+    <div class="footer">
+        Kum4 — <a href="https://github.com/0xitsss/kum4" target="_blank">open source</a> crypto processing · MIT · by <a href="https://t.me/its_unknow" target="_blank">0xItsss</a>
+    </div>
+</div>
+
+<script>
+function app() {
+    return {
+        exchangeId: '',
+        data: null,
+        loading: true,
+        error: '',
+        timerH: '00', timerM: '00', timerS: '00',
+        timerInterval: null,
+        refreshInterval: null,
+        copied: '',
+        toastShow: false,
+        toastMsg: '',
+        toastIcon: '',
+        toastTimer: null,
+
+        get statusIcon() {
+            if (!this.data) return '⏳';
+            switch(this.data.status) {
+                case 'pending': return '⏳';
+                case 'deposit_detected': return '🔍';
+                case 'completed': return '✅';
+                case 'expired': return '❌';
+                default: return '⏳';
+            }
+        },
+        get statusIconClass() {
+            if (!this.data) return '';
+            return this.data.status === 'pending' ? 'pending' : 'done';
+        },
+        get statusLabel() {
+            if (!this.data) return '';
+            switch(this.data.status) {
+                case 'pending': return 'Awaiting Deposit';
+                case 'deposit_detected': return 'Deposit Detected';
+                case 'completed': return 'Completed';
+                case 'expired': return 'Expired';
+                default: return this.data.status;
+            }
+        },
+        get statusClass() {
+            if (!this.data) return '';
+            switch(this.data.status) {
+                case 'pending': return 'pending';
+                case 'deposit_detected': return 'detected';
+                case 'completed': return 'done';
+                case 'expired': return 'pending';
+                default: return '';
+            }
+        },
+        get statusDesc() {
+            if (!this.data) return '';
+            switch(this.data.status) {
+                case 'pending': return 'Send USDT to the deposit address shown below. The system will automatically forward BTC to your wallet.';
+                case 'deposit_detected': return 'Your deposit has been confirmed. BTC is being prepared for transfer to your wallet.';
+                case 'completed': return 'BTC has been sent to your wallet. Check your balance to confirm.';
+                case 'expired': return 'This exchange has expired and is no longer valid. Please create a new one.';
+                default: return '';
+            }
+        },
+
+        tlStep(idx) {
+            if (!this.data) return '';
+            if (this.data.status === 'completed') return idx <= 2 ? 'done' : '';
+            if (this.data.status === 'deposit_detected') return idx <= 1 ? 'done' : (idx === 2 ? 'active' : '');
+            return idx === 0 ? 'done' : (idx === 1 ? 'active' : '');
+        },
+
+        init() {
+            this.exchangeId = window.location.pathname.split('/').pop();
+            if (!this.exchangeId || this.exchangeId === '') {
+                this.error = 'No exchange ID specified.';
+                this.loading = false;
+                return;
+            }
+            this.fetchExchange();
+            this.refreshInterval = setInterval(() => this.fetchExchange(), 10000);
+            this.timerInterval = setInterval(() => this.updateTimer(), 1000);
+            this.initBg();
+        },
+
+        async fetchExchange() {
+            try {
+                const r = await (await fetch('/api/exchange/' + this.exchangeId)).json();
+                if (r.error) { this.error = r.error; this.loading = false; return; }
+                this.data = r;
+                this.error = '';
+                this.updateTimer();
+                this.loading = false;
+            } catch(e) {
+                if (!this.error) this.error = 'Failed to load exchange.';
+                console.warn(e);
+                this.loading = false;
+            }
+        },
+
+        updateTimer() {
+            if (!this.data) return;
+            const now = Math.floor(Date.now() / 1000);
+            let rem = Math.max(0, this.data.expires_at - now);
+            const h = Math.floor(rem / 3600);
+            const m = Math.floor((rem % 3600) / 60);
+            const s = rem % 60;
+            this.timerH = String(h).padStart(2, '0');
+            this.timerM = String(m).padStart(2, '0');
+            this.timerS = String(s).padStart(2, '0');
+        },
+
+        async copy(val, el) {
+            try {
+                await navigator.clipboard.writeText(val);
+            } catch {
+                const inp = document.createElement('input');
+                inp.value = val;
+                inp.style.position = 'fixed'; inp.style.opacity = '0';
+                document.body.appendChild(inp);
+                inp.select();
+                document.execCommand('copy');
+                document.body.removeChild(inp);
+            }
+            this.copied = val;
+            el.textContent = '✓ Copied';
+            el.style.cssText = 'background:var(--green);color:#000;border-color:var(--green)';
+            setTimeout(() => { if (el) { el.textContent = '📋 Copy'; el.style.cssText = ''; } }, 2000);
+            this.toast('✅', 'Address copied');
+        },
+
+        toast(icon, msg) {
+            this.toastIcon = icon; this.toastMsg = msg; this.toastShow = true;
+            clearTimeout(this.toastTimer);
+            this.toastTimer = setTimeout(() => { this.toastShow = false; }, 3000);
+        },
+
+        fmtTime(ts) {
+            const d = new Date(ts * 1000);
+            return d.toLocaleString('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        },
+
+        initBg() {
+            const canvas = document.getElementById('bg-canvas');
+            if (!canvas) return;
+            const ctx = canvas.getContext('2d');
+            let W, H, mouse = { x: 0, y: 0 }, dots = [];
+
+            function resize() {
+                W = canvas.width = window.innerWidth;
+                H = canvas.height = window.innerHeight;
+            }
+            window.addEventListener('resize', resize);
+            window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+            resize();
+
+            const COUNT = 120;
+            const CONNECT_R = 140;
+            for (let i = 0; i < COUNT; i++) {
+                dots.push({
+                    x: Math.random() * W, y: Math.random() * H,
+                    vx: (Math.random() - 0.5) * 1.2,
+                    vy: (Math.random() - 0.5) * 1.2,
+                    r: Math.random() * 2 + 1
+                });
+            }
+
+            function draw() {
+                ctx.clearRect(0, 0, W, H);
+                const mx = mouse.x, my = mouse.y;
+                for (const d of dots) {
+                    d.x += d.vx; d.y += d.vy;
+                    if (d.x < 0) d.x = W; if (d.x > W) d.x = 0;
+                    if (d.y < 0) d.y = H; if (d.y > H) d.y = 0;
+                }
+                for (let i = 0; i < dots.length; i++) {
+                    for (let j = i + 1; j < dots.length; j++) {
+                        const dx = dots[i].x - dots[j].x;
+                        const dy = dots[i].y - dots[j].y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < CONNECT_R) {
+                            const alpha = (1 - dist / CONNECT_R) * 0.35;
+                            ctx.strokeStyle = `rgba(247,147,26,${alpha})`;
+                            ctx.lineWidth = 0.6;
+                            ctx.beginPath();
+                            ctx.moveTo(dots[i].x, dots[i].y);
+                            ctx.lineTo(dots[j].x, dots[j].y);
+                            ctx.stroke();
+                        }
+                    }
+                    const dmx = dots[i].x - mx, dmy = dots[i].y - my;
+                    const dm = Math.sqrt(dmx * dmx + dmy * dmy);
+                    if (dm < CONNECT_R) {
+                        const alpha = (1 - dm / CONNECT_R) * 0.5;
+                        ctx.strokeStyle = `rgba(247,147,26,${alpha})`;
+                        ctx.lineWidth = 1;
+                        ctx.beginPath();
+                        ctx.moveTo(dots[i].x, dots[i].y);
+                        ctx.lineTo(mx, my);
+                        ctx.stroke();
+                    }
+                }
+                for (const d of dots) {
+                    ctx.fillStyle = 'rgba(247,147,26,0.5)';
+                    ctx.beginPath();
+                    ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+                requestAnimationFrame(draw);
+            }
+            draw();
+        }
+    }
+}
+</script>
+</body>
+</html>

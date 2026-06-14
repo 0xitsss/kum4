@@ -1,5 +1,6 @@
 mod bitcoin_tx;
 mod config;
+mod crypto;
 mod database;
 mod dht;
 mod error;
@@ -39,7 +40,15 @@ async fn main() -> error::Result<()> {
         .init();
 
     let config = Config::from_env()?;
-    let wallet = Wallet::from_seed_phrase(&config.seed_phrase, config.btc_network_bitcoin())?;
+    let seed_phrase = crypto::load_or_generate_key(&config.key_path)?;
+    let wallet = Wallet::from_seed_phrase(&seed_phrase, config.btc_network_bitcoin())?;
+    let wallet = Arc::new(wallet);
+
+    let db = Database::open(&config.db_path)?;
+
+    // --- Derive & store first monitored address per chain ---
+    let _ = db.addr_index("tron")?;
+    let _ = db.addr_index("bsc")?;
 
     // --- HTTP client: Tor or clearnet ---
     let http_client: reqwest::Client = if config.tor_enabled {
@@ -66,7 +75,7 @@ async fn main() -> error::Result<()> {
         let (dht_cmd_tx, dht_cmd_rx) = mpsc::channel::<DhtCmd>(256);
         let (dht_event_tx, mut dht_event_rx) = mpsc::channel::<DhtEvent>(256);
 
-        let dht_node = DhtNode::new(&config.seed_phrase, listen_addr, dht_cmd_rx, dht_event_tx)?;
+        let dht_node = DhtNode::new(&seed_phrase, listen_addr, dht_cmd_rx, dht_event_tx)?;
         let pid = dht_node.peer_id().to_string();
         peer_id = pid;
         p2p_state = Arc::new(P2pState::new(peer_id.clone(), 0.0, config.profit_fee_usd));
@@ -108,7 +117,7 @@ async fn main() -> error::Result<()> {
             }
         });
     } else {
-        peer_id = peer_id_from_seed(&config.seed_phrase);
+        peer_id = peer_id_from_seed(&seed_phrase);
         p2p_state = Arc::new(P2pState::new(peer_id.clone(), 0.0, config.profit_fee_usd));
     }
 
@@ -119,7 +128,6 @@ async fn main() -> error::Result<()> {
     let tron_contract = config.tron_usdt_contract.clone();
     let bsc_rpc = config.bsc_rpc_url.clone();
     let bsc_contract = config.bsc_usdt_contract.clone();
-    let db_path = config.db_path.clone();
 
     let rebalance = Arc::new(RebalanceEngine::new(
         config.rebalance_threshold,
@@ -131,6 +139,8 @@ async fn main() -> error::Result<()> {
     });
 
     let rebalance_handler = rebalance.clone();
+    let deposit_config = config.clone();
+    let deposit_db = db.clone();
     let deposit_p2p = p2p_state.clone();
     let deposit_http = http_client.clone();
     let deposit_registry = peer_registry.clone();
@@ -141,6 +151,21 @@ async fn main() -> error::Result<()> {
                 amount = %deposit.usdt_amount, from = %deposit.from_address,
                 "Deposit detected"
             );
+
+            // Skip deposits below minimum USDT amount
+            if deposit.usdt_amount < deposit_config.min_usdt_amount {
+                tracing::warn!(amount = deposit.usdt_amount, "Deposit below minimum, skipping");
+                continue;
+            }
+
+            if let Ok(Some(exchange)) = deposit_db.find_exchange_by_address(&deposit.to_address) {
+                let btc_price = 100_000.0;
+                let btc_amount = deposit.usdt_amount / btc_price;
+                let _ = deposit_db.set_exchange_amounts(&exchange.id, deposit.usdt_amount, btc_amount);
+                let _ = deposit_db.set_exchange_status(&exchange.id, "deposit_detected");
+                tracing::info!(exchange_id = %exchange.id, "Exchange matched to deposit");
+            }
+
             let total = rebalance_handler.add_deposit(deposit.clone()).await;
 
             if total >= rebalance_handler.threshold {
@@ -160,7 +185,7 @@ async fn main() -> error::Result<()> {
                                         from_peer: deposit_p2p.peer_id.clone(),
                                         usdt_amount: deposit.usdt_amount,
                                         chain: deposit.chain.to_string(),
-                                        user_btc_address: String::new(),
+                                        user_btc_address: deposit.from_address.clone(),
                                         deposit_txid: deposit.tx_hash.clone(),
                                     };
                                     match call_node_redirect(&deposit_http, &info.http_addr, &req).await {
@@ -180,7 +205,7 @@ async fn main() -> error::Result<()> {
         }
     });
 
-    let db = Database::open(&db_path)?;
+    let db_for_web = db.clone();
     let client_trx = http_client.clone();
     let client_bsc = http_client.clone();
     let tx_tron = deposit_tx.clone();
@@ -188,10 +213,10 @@ async fn main() -> error::Result<()> {
     let db_tron = db.clone();
     let db_bsc = db;
     tokio::spawn(async move {
-        Monitor::start_tron(client_trx, tron_rpc, tron_contract, vec![], tx_tron, db_tron).await;
+        Monitor::start_tron(client_trx, tron_rpc, tron_contract, tx_tron, db_tron).await;
     });
     tokio::spawn(async move {
-        Monitor::start_bsc(client_bsc, bsc_rpc, bsc_contract, vec![], tx_bsc, db_bsc).await;
+        Monitor::start_bsc(client_bsc, bsc_rpc, bsc_contract, tx_bsc, db_bsc).await;
     });
 
     drop(deposit_tx);
@@ -200,6 +225,7 @@ async fn main() -> error::Result<()> {
     let uptime_start = tokio::time::Instant::now();
     let app_state = Arc::new(web::AppState {
         wallet,
+        db: db_for_web,
         config: config.clone(),
         mempool_url: config.mempool_url.clone(),
         peer_id,
