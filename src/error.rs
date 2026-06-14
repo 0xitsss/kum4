@@ -20,9 +20,6 @@ pub enum Kum4Error {
     #[error("Bitcoin address error: {0}")]
     BitcoinAddress(#[from] bitcoin::address::ParseError),
 
-    #[error("Exchange error: {0}")]
-    Exchange(String),
-
     #[error("Wallet error: {0}")]
     Wallet(String),
 
@@ -43,6 +40,12 @@ pub enum Kum4Error {
 
     #[error("Sighash error: {0}")]
     Sighash(String),
+
+    #[error("DHT error: {0}")]
+    Dht(String),
+
+    #[error("P2P error: {0}")]
+    P2p(String),
 }
 
 pub type Result<T> = std::result::Result<T, Kum4Error>;

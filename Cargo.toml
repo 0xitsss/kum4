@@ -1,11 +1,11 @@
 [package]
 name = "kum4"
-version = "0.1.0"
+version = "0.0.2"
 edition = "2021"
 
 [dependencies]
 tokio = { version = "1", features = ["full"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls", "socks"] }
 sled = "0.34"
 bitcoin = "0.32"
 serde = { version = "1", features = ["derive"] }
@@ -26,3 +26,6 @@ chrono = { version = "0.4", features = ["serde"] }
 axum = "0.7"
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 tera = "1"
+libp2p = { version = "0.54", default-features = false, features = ["tcp", "tokio", "kad", "identify", "ping", "noise", "yamux", "dns", "ed25519", "macros"] }
+futures = "0.3"
+rand = "0.8"
