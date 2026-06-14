@@ -41,8 +41,9 @@ sends BTC to merchant wallet. No KYC, no third parties, no hidden fees.
 ### 6. Security
 - Private keys never logged, never printed, never serialized.
 - Seed / mnemonic only in env.
-- Validate all external inputs (RPC, CEX API responses).
+- Validate all external inputs (RPC responses, user input).
 - Rate-limit outbound requests.
+- Run safety tooling before releases: UB check (miri), unsafe audit (geiger), static analysis (rudra).
 
 ## Development Workflow
 
@@ -52,7 +53,8 @@ sends BTC to merchant wallet. No KYC, no third parties, no hidden fees.
 4. **Implement** — Minimum to pass
 5. **Refactor** — Clean, retest
 6. **Verify** — `cargo clippy && cargo test`
-7. **Commit** — conventional commit
+7. **Safety audit** — `cargo miri test` (UB), `cargo geiger` (unsafe), `rudra` / `mirai` / `prusti` / `creusot` (static verification) when available
+8. **Commit** — conventional commit
 
 ## Commit Convention
 ```
