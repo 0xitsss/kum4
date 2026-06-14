@@ -1,8 +1,8 @@
 # Kumquad (kum4)
 
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-blue)]()
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
-[![Tor](https://img.shields.io/badge/Tor-supported-7D4698)]()
+[![Rust](https://img.shields.io/badge/rust-1.75%2B-blue?style=for-the-badge)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](LICENSE)
+[![Tor](https://img.shields.io/badge/Tor-supported-7D4698?style=for-the-badge)]()
 
 **Non-custodial USDT→BTC processing engine with reserve model.**
 
