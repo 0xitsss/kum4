@@ -1,0 +1,28 @@
+[package]
+name = "kum4"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
+sled = "0.34"
+bitcoin = "0.32"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dotenvy = "0.15"
+thiserror = "2"
+hex = "0.4"
+sha2 = "0.10"
+ripemd = "0.1"
+bs58 = "0.5"
+secp256k1 = { version = "0.29", features = ["global-context"] }
+bip39 = "2"
+sha3 = "0.10"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+axum = "0.7"
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+tera = "1"
