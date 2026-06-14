@@ -1,9 +1,5 @@
 <p align="center">
-  <svg width="56" height="56" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <rect x="2" y="2" width="24" height="24" rx="8" stroke="#f7931a" stroke-width="2.5"/>
-    <path d="M14 8C10.686 8 8 9.79 8 12.5c0 2.71 2.686 3.5 6 3.5s6 .79 6 3.5c0 2.71-2.686 4.5-6 4.5" stroke="#f7931a" stroke-width="2" stroke-linecap="round"/>
-    <path d="M14 6v2M14 20v2" stroke="#f7931a" stroke-width="2" stroke-linecap="round"/>
-  </svg>
+  <img src="assets/logo.svg" width="56" height="56" alt="Kumquad logo">
 </p>
 
 # Kumquad (kum4) &nbsp;
