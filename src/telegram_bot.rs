@@ -90,6 +90,31 @@ fn fmt_time(ts: u64) -> String {
     d.format(DATE_FMT).to_string()
 }
 
+fn main_menu_kb() -> InlineKeyboardMarkup {
+    let mut kb: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    let items = [
+        ("📊 Dashboard", "menu:dashboard"),
+        ("💱 Exchanges", "menu:exchanges"),
+        ("🏦 BTC Reserve", "menu:reserve"),
+        ("⚙️ System / Health", "menu:system"),
+        ("🔍 Manual Reviews", "menu:reviews"),
+    ];
+    for (text, cb) in &items {
+        kb.push(vec![InlineKeyboardButton::callback(*text, cb.to_string())]);
+    }
+    InlineKeyboardMarkup::new(kb)
+}
+
+fn back_kb() -> InlineKeyboardMarkup {
+    let mut kb: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    kb.push(vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu:back")]);
+    InlineKeyboardMarkup::new(kb)
+}
+
+fn main_menu_text() -> String {
+    "🏠 *Kumquad Admin*\n\nDashboard, exchanges, BTC reserve — all in one place.".into()
+}
+
 fn is_admin(msg: &Message, state: &BotState) -> bool {
     let uid = msg.from.as_ref().map(|u| u.id.0 as i64).unwrap_or(0);
     uid == state.config.admin_user_id
@@ -178,15 +203,10 @@ async fn cmd_start(bot: Bot, msg: Message, state: Arc<BotState>) -> Result<()> {
         bot.send_message(msg.chat.id, "⛔ Access denied.").await?;
         return Ok(());
     }
-    let text = "👋 *Kumquad Admin Bot*\n\n\
-                Manage exchanges, monitor BTC reserve, force-approve deposits.\n\n\
-                /exchanges — List active exchanges\n\
-                /exchange `<id>` — Show exchange details\n\
-                /reserve — BTC reserve status\n\
-                /health — System health\n\
-                /resolve `<tx_hash>` — Force-approve manual review\n\
-                /help — This message";
-    bot.send_message(msg.chat.id, text).parse_mode(teloxide::types::ParseMode::MarkdownV2).await?;
+    bot.send_message(msg.chat.id, main_menu_text())
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(main_menu_kb())
+        .await?;
     Ok(())
 }
 
@@ -568,6 +588,16 @@ mod tests {
     fn test_format_utxo_summary() {
         let result = format_utxo_summary(&[], 0, 0);
         assert!(result.contains("0.00000000"));
+    }
+
+    #[test]
+    fn test_main_menu_keyboard() {
+        let kb = main_menu_kb();
+        let rows = kb.inline_keyboard;
+        assert_eq!(rows.len(), 5);
+        assert!(rows[0][0].text.contains("Dashboard"));
+        assert_eq!(rows[0][0].kind, teloxide::types::InlineKeyboardButtonKind::CallbackData("menu:dashboard".into()));
+        assert!(rows[4][0].text.contains("Reviews"));
     }
 
     #[test]
