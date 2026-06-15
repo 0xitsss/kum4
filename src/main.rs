@@ -103,7 +103,10 @@ async fn main() -> error::Result<()> {
         .init();
 
     let config = Config::from_env()?;
-    let seed_phrase = crypto::load_or_generate_key(&config.key_path)?;
+    let seed_phrase = match std::env::var("SEED_PHRASE") {
+        Ok(s) => s,
+        Err(_) => crypto::load_or_generate_key(&config.key_path)?,
+    };
     let wallet = Wallet::from_seed_phrase(&seed_phrase, config.btc_network_bitcoin())?;
     let wallet = Arc::new(wallet);
 
