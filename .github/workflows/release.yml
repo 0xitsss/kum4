@@ -1,0 +1,53 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create.outputs.upload_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: create
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Kumquad ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  build-linux:
+    needs: create-release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - run: tar czf kum4-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz -C target/release kum4
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: kum4-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows:
+    needs: create-release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
+      - run: Compress-Archive -Path target/release/kum4.exe -DestinationPath kum4-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: kum4-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip
+          token: ${{ secrets.GITHUB_TOKEN }}

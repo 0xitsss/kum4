@@ -8,6 +8,8 @@
   <a href=""><img src="https://img.shields.io/badge/rust-1.75%2B-blue?style=for-the-badge" alt="Rust"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="MIT"></a>
   <a href=""><img src="https://img.shields.io/badge/Tor-supported-7D4698?style=for-the-badge" alt="Tor"></a>
+  <a href=""><img src="https://img.shields.io/github/actions/workflow/status/0xitsss/kum4/ci.yml?branch=main&style=for-the-badge&label=CI" alt="CI"></a>
+  <a href=""><img src="https://img.shields.io/github/v/release/0xitsss/kum4?style=for-the-badge&label=release" alt="Release"></a>
 </p>
 
 <p align="center"><b>Non-custodial USDT → BTC processing engine.</b><br>
@@ -96,7 +98,7 @@ Web UI: `http://127.0.0.1:8080`
 | `WEB_HOST` | no | `127.0.0.1` | HTTP bind address |
 | `NODE_PORT` | no | `8080` | HTTP server port |
 | `NODE_ID` | no | `kum4-default` | Identity in mesh network |
-| `NODE_VERSION` | no | `0.0.3` | Version reported in health API |
+| `NODE_VERSION` | no | `0.0.4` | Version reported in health API |
 
 ---
 
@@ -150,12 +152,32 @@ Without Tor (`TOR_ENABLED=false`), the node runs standalone without DHT.
 
 ---
 
+## Telegram Admin Bot
+
+Kumquad includes a Telegram bot for admin management:
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Main menu with all sections |
+| `/dashboard` | Pending exchanges, BTC reserve, manual reviews |
+| `/reviews` | Manual reviews for amount mismatches |
+| `/resolve <tx_hash>` | Resolve a manual review by tx hash |
+| `/exchanges` | Browse pending exchanges |
+| `/exchange <id>` | Exchange detail page |
+| `/reserve` | BTC reserve with UTXO breakdown |
+| `/health` | System health with RPC status |
+
+Set `BOT_TOKEN` and `ADMIN_USER_ID` in `.env` to enable.
+
+---
+
 ## Development
 
 ```bash
-cargo test          # unit tests (deterministic, no network)
-cargo clippy        # lint
-cargo build --release
+cargo test              # unit tests (deterministic, no network)
+cargo clippy            # lint
+cargo fmt --check       # formatting check
+cargo build --release   # production binary
 ```
 
 ### Testnet
