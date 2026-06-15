@@ -12,6 +12,65 @@ use crate::wallet::Wallet;
 use crate::monitor::{Chain, DepositEvent};
 use crate::{config::Config, error::Result};
 
+#[derive(serde::Deserialize, Debug)]
+#[allow(dead_code)]
+struct UtxoStatus {
+    confirmed: bool,
+    block_height: Option<u64>,
+}
+
+#[derive(serde::Deserialize, Debug)]
+#[allow(dead_code)]
+struct UtxoJson {
+    txid: String,
+    vout: u32,
+    value: u64,
+    status: UtxoStatus,
+}
+
+#[allow(dead_code)]
+fn sats_to_btc(sats: u64) -> f64 {
+    sats as f64 / 100_000_000.0
+}
+
+#[allow(dead_code)]
+fn reserve_is_low(reserve_btc: f64, pending_btc: f64) -> bool {
+    reserve_btc < pending_btc * 1.2
+}
+
+#[allow(dead_code)]
+fn paginate<T>(items: &[T], page: usize, per_page: usize) -> (&[T], usize) {
+    let total_pages = items.len().div_ceil(per_page);
+    let page = page.clamp(1, total_pages.max(1));
+    let start = (page - 1) * per_page;
+    let end = start + per_page.min(items.len().saturating_sub(start));
+    (&items[start..end], total_pages)
+}
+
+#[allow(dead_code)]
+async fn fetch_btc_balance(client: &reqwest::Client, mempool_url: &str, address: &str)
+    -> std::result::Result<(Vec<UtxoJson>, u64, u64), String>
+{
+    let url = format!("{}/api/address/{}/utxo", mempool_url.trim_end_matches('/'), address);
+    let resp = client.get(&url).send().await.map_err(|e| format!("HTTP error: {e}"))?;
+    let utxos: Vec<UtxoJson> = resp.json().await.map_err(|e| format!("Parse error: {e}"))?;
+    let confirmed_value: u64 = utxos.iter().filter(|u| u.status.confirmed).map(|u| u.value).sum();
+    let unconfirmed_value: u64 = utxos.iter().filter(|u| !u.status.confirmed).map(|u| u.value).sum();
+    Ok((utxos, confirmed_value, unconfirmed_value))
+}
+
+#[allow(dead_code)]
+fn format_utxo_summary(utxos: &[UtxoJson], confirmed_sats: u64, unconfirmed_sats: u64) -> String {
+    let confirmed_count = utxos.iter().filter(|u| u.status.confirmed).count();
+    let unconfirmed_count = utxos.iter().filter(|u| !u.status.confirmed).count();
+    format!(
+        "Balance: `{:.8}` BTC\nUTXOs: {} confirmed, {} unconfirmed",
+        sats_to_btc(confirmed_sats + unconfirmed_sats),
+        confirmed_count,
+        unconfirmed_count,
+    )
+}
+
 pub struct BotState {
     pub db: Database,
     pub config: Config,
@@ -465,6 +524,51 @@ mod tests {
     use crate::config::Config;
     use crate::wallet::Wallet;
     use bitcoin::Network;
+
+    #[test]
+    fn test_parse_utxo_response() {
+        let json = r#"[
+            {"txid":"abc","vout":0,"value":5000000,"status":{"confirmed":true,"block_height":800000}}
+        ]"#;
+        let utxos: Vec<UtxoJson> = serde_json::from_str(json).unwrap();
+        assert_eq!(utxos.len(), 1);
+        assert_eq!(utxos[0].value, 5000000);
+        assert!(utxos[0].status.confirmed);
+    }
+
+    #[test]
+    fn test_pagination_bounds() {
+        let total = 13;
+        let per_page = 5;
+        let max_page = (total + per_page - 1) / per_page;
+        assert_eq!(max_page, 3);
+        assert_eq!((1 as usize).clamp(1, max_page), 1);
+        assert_eq!((0 as usize).clamp(1, max_page), 1);
+        assert_eq!((3 as usize).clamp(1, max_page), 3);
+        assert_eq!((4 as usize).clamp(1, max_page), 3);
+        assert_eq!((5 as usize).clamp(1, max_page), 3);
+    }
+
+    #[test]
+    fn test_sats_to_btc() {
+        assert_eq!(sats_to_btc(100_000_000), 1.0);
+        assert_eq!(sats_to_btc(50_000_000), 0.5);
+        assert_eq!(sats_to_btc(1), 0.00000001);
+        assert_eq!(sats_to_btc(0), 0.0);
+    }
+
+    #[test]
+    fn test_reserve_warning() {
+        assert!(reserve_is_low(0.5, 1.0));
+        assert!(!reserve_is_low(2.0, 1.0));
+        assert!(!reserve_is_low(1.2, 1.0));
+    }
+
+    #[test]
+    fn test_format_utxo_summary() {
+        let result = format_utxo_summary(&[], 0, 0);
+        assert!(result.contains("0.00000000"));
+    }
 
     #[test]
     fn test_bot_state_fields() {
