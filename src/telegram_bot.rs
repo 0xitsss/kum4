@@ -256,6 +256,28 @@ fn build_reserve_text(address: &str, utxos: &[UtxoJson], confirmed_sats: u64, un
     )
 }
 
+fn build_reviews_view(reviews: &[serde_json::Value]) -> (String, InlineKeyboardMarkup) {
+    if reviews.is_empty() {
+        return ("✅ No manual reviews.".into(), back_kb());
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut kb_rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    lines.push(format!("🔍 *Manual Reviews: {}*", reviews.len()));
+    for (i, r) in reviews.iter().enumerate() {
+        let tx = r["tx_hash"].as_str().unwrap_or("?");
+        let chain = r["chain"].as_str().unwrap_or("?");
+        let got = r["got_amount"].as_f64().unwrap_or(0.0);
+        let expected = r["expected_amount"].as_f64().unwrap_or(0.0);
+        let short_tx: String = tx.chars().take(16).collect();
+        lines.push(format!("{}. `{}` {} — got {:.2}, expected {:.2}", i + 1, short_tx, chain, got, expected));
+        kb_rows.push(vec![
+            InlineKeyboardButton::callback(format!("✅ Resolve: {}", short_tx), format!("resolve_review:{}", tx)),
+        ]);
+    }
+    kb_rows.push(vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu:back")]);
+    (lines.join("\n"), InlineKeyboardMarkup::new(kb_rows))
+}
+
 fn build_dashboard_text(tron_pending: usize, bsc_pending: usize, n_reviews: usize, btc_balance: f64) -> String {
     let total = tron_pending + bsc_pending;
     let warning = if n_reviews > 0 {
@@ -504,6 +526,21 @@ async fn cmd_resolve(bot: Bot, msg: Message, state: Arc<BotState>, args: String)
     Ok(())
 }
 
+async fn cmd_reviews(bot: Bot, msg: Message, state: Arc<BotState>) -> Result<()> {
+    let deny = admin_only(msg.clone(), state.clone());
+    if !deny.is_empty() {
+        bot.send_message(msg.chat.id, &deny).await?;
+        return Ok(());
+    }
+    let reviews = state.db.get_manual_reviews().unwrap_or_default();
+    let (text, kb) = build_reviews_view(&reviews);
+    bot.send_message(msg.chat.id, text)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(kb)
+        .await?;
+    Ok(())
+}
+
 use teloxide::types::MessageId;
 
 fn msg_chat_id(msg: &MaybeInaccessibleMessage) -> ChatId {
@@ -613,6 +650,8 @@ pub async fn run(state: Arc<BotState>) {
                     cmd_exchange(bot, msg, state, args.to_string()).await
                 } else if text.starts_with("/dashboard") {
                     cmd_dashboard(bot, msg, state).await
+                } else if text.starts_with("/reviews") {
+                    cmd_reviews(bot, msg, state).await
                 } else if text.starts_with("/reserve") {
                     cmd_reserve(bot, msg, state).await
                 } else if text.starts_with("/health") {
@@ -832,5 +871,33 @@ mod tests {
         let text = build_reserve_text("addr", &utxos, 150_000_000, 0, 0.0);
         assert!(text.contains("... and 5 more"));
         assert_eq!(text.matches("tx").count(), 10);
+    }
+
+    #[test]
+    fn test_reviews_text_empty() {
+        let (text, _kb) = build_reviews_view(&[]);
+        assert!(text.contains("No manual reviews"));
+    }
+
+    #[test]
+    fn test_reviews_text_with_items() {
+        let reviews = vec![
+            serde_json::json!({"tx_hash": "tx1", "chain": "tron", "got_amount": 95.0, "expected_amount": 100.0}),
+        ];
+        let (text, _kb) = build_reviews_view(&reviews);
+        assert!(text.contains("tx1"));
+        assert!(text.contains("tron"));
+        assert!(text.contains("95.00"));
+    }
+
+    #[test]
+    fn test_reviews_multiple_items() {
+        let reviews = vec![
+            serde_json::json!({"tx_hash": "tx1", "chain": "tron", "got_amount": 95.0, "expected_amount": 100.0}),
+            serde_json::json!({"tx_hash": "tx2", "chain": "bsc", "got_amount": 200.0, "expected_amount": 200.0}),
+        ];
+        let (text, _kb) = build_reviews_view(&reviews);
+        assert!(text.contains("Manual Reviews: 2"));
+        assert!(text.contains("200.00"));
     }
 }
