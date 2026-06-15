@@ -539,16 +539,21 @@ async fn cmd_resolve(bot: Bot, msg: Message, state: Arc<BotState>, args: String)
         Some(r) => {
             let to_addr = r["to_address"].as_str().unwrap_or("");
             let got = r["got_amount"].as_f64().unwrap_or(0.0);
+            let expected = r["expected_amount"].as_f64().unwrap_or(0.0);
             let chain_str = r["chain"].as_str().unwrap_or("tron");
+
+            if got < expected {
+                bot.send_message(msg.chat.id, format!(
+                    "⚠️ <b>Underpayment</b> <code>{}</code>\ngot {got:.2} USDT < expected {expected:.2} — ignored",
+                    tx_hash
+                )).parse_mode(teloxide::types::ParseMode::Html).await?;
+                return Ok(());
+            }
 
             let exchange = state.db.find_exchange_by_address(to_addr)?;
             match exchange {
                 Some(ex) => {
-                    let btc_price = 100_000.0;
-                    let fee = 1.0;
-                    let net = got - fee;
-                    let btc_amount = if net > 0.0 { net / btc_price } else { 0.0 };
-
+                    let btc_amount = ex.btc_amount.unwrap_or(0.0);
                     let _ = state.db.set_exchange_amounts(&ex.id, got, btc_amount);
                     let _ = state.db.set_exchange_status(&ex.id, "deposit_detected");
 
@@ -725,13 +730,7 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
             match exchange {
                 Some(ex) => {
                     let usdt = ex.usdt_amount.unwrap_or(0.0);
-                    let btc_price = 100_000.0;
-                    let fee = 1.0;
-                    let net = usdt - fee;
-                    let btc_amount = if net > 0.0 { net / btc_price } else { 0.0 };
-                    if usdt > 0.0 {
-                        let _ = state.db.set_exchange_amounts(&ex.id, usdt, btc_amount);
-                    }
+                    let btc_amount = ex.btc_amount.unwrap_or(0.0);
                     let _ = state.db.set_exchange_status(&ex.id, "deposit_detected");
                     let chain = if ex.chain == "bsc" { Chain::Bsc } else { Chain::Tron };
                     let deposit_event = DepositEvent {
@@ -773,14 +772,18 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
                     let tx_hash = r["tx_hash"].as_str().unwrap_or("?").to_string();
                     let to_addr = r["to_address"].as_str().unwrap_or("");
                     let got = r["got_amount"].as_f64().unwrap_or(0.0);
+                    let expected = r["expected_amount"].as_f64().unwrap_or(0.0);
                     let chain_str = r["chain"].as_str().unwrap_or("tron");
+                    if got < expected {
+                        bot.answer_callback_query(q.id)
+                            .text(format!("⚠️ Underpayment: got {got:.2} USDT < expected {expected:.2} — ignored"))
+                            .await?;
+                        return Ok(());
+                    }
                     let exchange = state.db.find_exchange_by_address(to_addr)?;
                     match exchange {
                         Some(ex) => {
-                            let btc_price = 100_000.0;
-                            let fee = 1.0;
-                            let net = got - fee;
-                            let btc_amount = if net > 0.0 { net / btc_price } else { 0.0 };
+                            let btc_amount = ex.btc_amount.unwrap_or(0.0);
                             let _ = state.db.set_exchange_amounts(&ex.id, got, btc_amount);
                             let _ = state.db.set_exchange_status(&ex.id, "deposit_detected");
                             let chain = if chain_str == "bsc" { Chain::Bsc } else { Chain::Tron };
