@@ -19,6 +19,8 @@ pub struct NodeInfo {
     pub chains: Vec<String>,
     pub btc_reserve: f64,
     pub status: String,
+    pub version: String,
+    pub reserve_updated: u64,
 }
 
 #[allow(dead_code)]

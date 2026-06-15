@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -93,7 +95,6 @@ impl ReputationTable {
         self.record_success(peer_id).await;
     }
 
-    #[allow(dead_code)]
     pub async fn record_timeout(&self, peer_id: &str) {
         self.record_failure(peer_id).await;
     }
