@@ -8,14 +8,17 @@ mod monitor;
 mod p2p;
 mod price;
 mod rebalance;
+mod telegram_bot;
 mod tor_client;
 mod wallet;
 mod web;
 
 use std::sync::Arc;
 
+use secp256k1::Secp256k1;
 use tokio::sync::mpsc;
 
+use crate::bitcoin_tx::BitcoinTxBuilder;
 use crate::config::Config;
 use crate::database::Database;
 use crate::dht::{DhtCmd, DhtEvent, DhtNode, NodeInfo};
@@ -24,6 +27,62 @@ use crate::p2p::{new_peer_registry, call_node_redirect, call_node_reserve, PeerR
 use crate::rebalance::RebalanceEngine;
 use crate::wallet::Wallet;
 use sha2::{Digest, Sha256};
+
+async fn send_btc_to_user(
+    client: &reqwest::Client,
+    mempool_url: &str,
+    wallet: &Wallet,
+    reserve_index: u32,
+    network: bitcoin::Network,
+    exchange: &database::ExchangeRequest,
+) -> error::Result<String> {
+    let payout_sats = match exchange.btc_amount {
+        Some(btc) if btc > 0.0 => (btc * 100_000_000.0) as u64,
+        _ => return Err(error::Kum4Error::Config("Invalid or zero BTC amount".into())),
+    };
+    let btc_address = wallet.btc_address(reserve_index)?;
+    let utxos = BitcoinTxBuilder::fetch_utxos(client, mempool_url, &btc_address.to_string()).await?;
+    let confirmed_utxos: Vec<bitcoin_tx::UtxoEntry> = utxos.into_iter().filter(|u| u.confirmed).collect();
+    if confirmed_utxos.is_empty() {
+        return Err(error::Kum4Error::Bitcoin("No confirmed UTXOs available".into()));
+    }
+
+    let fee_url = format!("{}/api/v1/fees/recommended", mempool_url.trim_end_matches('/'));
+    let fee_resp = client.get(&fee_url).send().await
+        .map_err(|e| error::Kum4Error::Network(format!("Fee fetch: {e}")))?;
+    let fee_data: serde_json::Value = fee_resp.json().await
+        .map_err(|e| error::Kum4Error::Network(format!("Fee parse: {e}")))?;
+    let fee_rate_sat_per_vb = fee_data["fastestFee"].as_f64().unwrap_or(50.0);
+
+    let tx_vbytes = BitcoinTxBuilder::estimate_tx_vbytes(confirmed_utxos.len(), 2);
+    let fee_sats = (fee_rate_sat_per_vb * tx_vbytes as f64) as u64;
+
+    let target = payout_sats + fee_sats;
+    let (selected, total_selected) = BitcoinTxBuilder::select_utxos(&confirmed_utxos, target);
+    if total_selected < target {
+        return Err(error::Kum4Error::Bitcoin(format!(
+            "Insufficient UTXOs: have {} sats, need {} sats", total_selected, target
+        )));
+    }
+
+    use bitcoin::address::{NetworkUnchecked};
+    let unchecked: bitcoin::Address<NetworkUnchecked> = exchange.btc_address.parse()
+        .map_err(error::Kum4Error::BitcoinAddress)?;
+    let merchant_address = unchecked.require_network(network)
+        .map_err(|e| error::Kum4Error::Bitcoin(format!("Network mismatch: {e}")))?;
+
+    let mut unsigned_tx = BitcoinTxBuilder::build_unsigned_tx(&selected, &merchant_address, payout_sats, fee_sats)?;
+
+    let priv_key = wallet.btc_private_key_at_index(reserve_index)?;
+    let secp = Secp256k1::new();
+    use bitcoin::CompressedPublicKey;
+    let compressed = CompressedPublicKey::from_private_key(&secp, &priv_key)?;
+    BitcoinTxBuilder::sign_p2wpkh(&mut unsigned_tx, &selected, &priv_key, &compressed)?;
+
+    let tx_hex = bitcoin::consensus::encode::serialize_hex(&unsigned_tx);
+    let txid = BitcoinTxBuilder::broadcast_tx_with_client(client, mempool_url, tx_hex).await?;
+    Ok(txid)
+}
 
 fn peer_id_from_seed(seed: &str) -> String {
     let hash = Sha256::digest(seed.as_bytes());
@@ -144,6 +203,10 @@ async fn main() -> error::Result<()> {
     let deposit_p2p = p2p_state.clone();
     let deposit_http = http_client.clone();
     let deposit_registry = peer_registry.clone();
+    let deposit_wallet = wallet.clone();
+    let deposit_mempool = config.mempool_url.clone();
+    let deposit_btc_network = config.btc_network_bitcoin();
+    let deposit_reserve_index = config.btc_reserve_index;
     tokio::spawn(async move {
         while let Some(deposit) = deposit_rx.recv().await {
             tracing::info!(
@@ -152,27 +215,51 @@ async fn main() -> error::Result<()> {
                 "Deposit detected"
             );
 
-            // Skip deposits below minimum USDT amount
             if deposit.usdt_amount < deposit_config.min_usdt_amount {
                 tracing::warn!(amount = deposit.usdt_amount, "Deposit below minimum, skipping");
                 continue;
             }
 
             if let Ok(Some(exchange)) = deposit_db.find_exchange_by_address(&deposit.to_address) {
-                let btc_price = 100_000.0;
-                let btc_amount = deposit.usdt_amount / btc_price;
-                let _ = deposit_db.set_exchange_amounts(&exchange.id, deposit.usdt_amount, btc_amount);
                 let _ = deposit_db.set_exchange_status(&exchange.id, "deposit_detected");
                 tracing::info!(exchange_id = %exchange.id, "Exchange matched to deposit");
+
+                // --- Auto-send BTC (Bug #1 fix) ---
+                let _ = deposit_db.set_exchange_status(&exchange.id, "sending");
+
+                match send_btc_to_user(
+                    &deposit_http,
+                    &deposit_mempool,
+                    &deposit_wallet,
+                    deposit_reserve_index,
+                    deposit_btc_network,
+                    &exchange,
+                ).await {
+                    Ok(btc_txid) => {
+                        let _ = deposit_db.set_exchange_status(&exchange.id, "sent");
+                        tracing::info!(
+                            exchange_id = %exchange.id,
+                            btc_txid = %btc_txid,
+                            "BTC sent successfully"
+                        );
+                    }
+                    Err(e) => {
+                        let _ = deposit_db.set_exchange_status(&exchange.id, "error");
+                        tracing::error!(
+                            exchange_id = %exchange.id,
+                            error = %e,
+                            "Failed to send BTC"
+                        );
+                    }
+                }
             }
 
             let total = rebalance_handler.add_deposit(deposit.clone()).await;
-
             if total >= rebalance_handler.threshold {
                 let estimated_btc = deposit.usdt_amount / 100_000.0;
                 let local_reserve = deposit_p2p.reserve.lock().await;
                 if local_reserve.btc_reserve >= estimated_btc {
-                    tracing::info!(btc_reserve = local_reserve.btc_reserve, "Reserve sufficient — operator to process");
+                    tracing::info!(btc_reserve = local_reserve.btc_reserve, "Reserve sufficient");
                 } else {
                     tracing::info!("Local reserve insufficient — checking peers");
                     let peers = deposit_registry.read().await;
@@ -206,26 +293,44 @@ async fn main() -> error::Result<()> {
     });
 
     let db_for_web = db.clone();
+    let db_bot = db.clone();
     let client_trx = http_client.clone();
     let client_bsc = http_client.clone();
     let tx_tron = deposit_tx.clone();
     let tx_bsc = deposit_tx.clone();
     let db_tron = db.clone();
     let db_bsc = db;
+    let tron_confirmations = config.tron_confirmations;
+    let bsc_confirmations = config.bsc_confirmations;
+    let max_pending = config.max_pending_per_chain;
     tokio::spawn(async move {
-        Monitor::start_tron(client_trx, tron_rpc, tron_contract, tx_tron, db_tron).await;
+        Monitor::start_tron(client_trx, tron_rpc, tron_contract, tx_tron, db_tron, tron_confirmations, max_pending).await;
     });
     tokio::spawn(async move {
-        Monitor::start_bsc(client_bsc, bsc_rpc, bsc_contract, tx_bsc, db_bsc).await;
+        Monitor::start_bsc(client_bsc, bsc_rpc, bsc_contract, tx_bsc, db_bsc, bsc_confirmations, max_pending).await;
+    });
+
+    let bot_deposit_tx = deposit_tx.clone();
+
+    let bot_state = Arc::new(telegram_bot::BotState {
+        db: db_bot,
+        config: config.clone(),
+        wallet: wallet.clone(),
+        http_client: http_client.clone(),
+        deposit_tx: bot_deposit_tx,
+    });
+    tokio::spawn(async move {
+        telegram_bot::run(bot_state).await;
     });
 
     drop(deposit_tx);
 
     // --- Web server ---
     let uptime_start = tokio::time::Instant::now();
+    let cleanup_db = db_for_web.clone();
     let app_state = Arc::new(web::AppState {
-        wallet,
         db: db_for_web,
+        wallet,
         config: config.clone(),
         mempool_url: config.mempool_url.clone(),
         peer_id,
@@ -241,6 +346,21 @@ async fn main() -> error::Result<()> {
         axum::serve(listener, web::router(app_state))
             .await
             .unwrap();
+    });
+
+    // Background cleanup of expired exchanges (Bug #8 fix)
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1800)).await;
+            match cleanup_db.delete_expired_exchanges(86400) {
+                Ok(count) => {
+                    if count > 0 {
+                        tracing::info!("Cleaned up {count} expired exchanges");
+                    }
+                }
+                Err(e) => tracing::error!("Cleanup error: {e}"),
+            }
+        }
     });
 
     let mode = if config.tor_enabled { "tor+mesh" } else { "clearnet" };
