@@ -4,6 +4,7 @@ mod crypto;
 mod database;
 mod dht;
 mod error;
+mod gossip;
 mod monitor;
 mod p2p;
 mod price;
