@@ -217,6 +217,17 @@ fn build_dashboard_text(tron_pending: usize, bsc_pending: usize, n_reviews: usiz
     )
 }
 
+fn build_exchanges_page_text(exchanges: &[crate::database::ExchangeRequest], page: usize, total_pages: usize) -> (String, bool, bool) {
+    if exchanges.is_empty() {
+        return ("✅ No exchanges to show.".into(), false, false);
+    }
+    let lines: Vec<String> = exchanges.iter().map(|ex| exchange_summary(ex)).collect();
+    let text = format!("💱 *Exchanges (стр {}/{})*\n\n{}", page, total_pages, lines.join("\n\n"));
+    let has_prev = page > 1;
+    let has_next = page < total_pages;
+    (text, has_next, has_prev)
+}
+
 async fn cmd_dashboard(bot: Bot, msg: Message, state: Arc<BotState>) -> Result<()> {
     let deny = admin_only(msg.clone(), state.clone());
     if !deny.is_empty() {
@@ -254,42 +265,48 @@ async fn cmd_start(bot: Bot, msg: Message, state: Arc<BotState>) -> Result<()> {
 }
 
 async fn cmd_exchanges(bot: Bot, msg: Message, state: Arc<BotState>) -> Result<()> {
+    cmd_exchanges_page(bot, msg, state, 1).await
+}
+
+async fn cmd_exchanges_page(bot: Bot, msg: Message, state: Arc<BotState>, page: usize) -> Result<()> {
     let deny = admin_only(msg.clone(), state.clone());
     if !deny.is_empty() {
         bot.send_message(msg.chat.id, &deny).await?;
         return Ok(());
     }
-
-    let pending = state.db.get_pending_exchanges("tron").unwrap_or_default();
-    let pending_bsc = state.db.get_pending_exchanges("bsc").unwrap_or_default();
-    let reviews = state.db.get_manual_reviews().unwrap_or_default();
-
-    let mut lines = Vec::new();
-    if pending.is_empty() && pending_bsc.is_empty() && reviews.is_empty() {
-        lines.push("✅ No pending exchanges or reviews.".into());
-    } else {
-        lines.push(format!("📋 *Pending TRON:* {}", pending.len()));
-        for ex in &pending {
-            lines.push(exchange_summary(ex));
-        }
-        lines.push(format!("\n📋 *Pending BSC:* {}", pending_bsc.len()));
-        for ex in &pending_bsc {
-            lines.push(exchange_summary(ex));
-        }
-        if !reviews.is_empty() {
-            lines.push(format!("\n⚠️ *Manual Reviews:* {}", reviews.len()));
-            for r in &reviews {
-                let tx = r["tx_hash"].as_str().unwrap_or("?");
-                let chain = r["chain"].as_str().unwrap_or("?");
-                let got = r["got_amount"].as_f64().unwrap_or(0.0);
-                let expected = r["expected_amount"].as_f64().unwrap_or(0.0);
-                lines.push(format!("🔍 `{}` {} — got `{:.2}` USDT, expected `{:.2}`", tx, chain, got, expected));
-            }
+    let mut all: Vec<crate::database::ExchangeRequest> = Vec::new();
+    for chain in &["tron", "bsc"] {
+        if let Ok(mut exs) = state.db.get_pending_exchanges(chain) {
+            all.append(&mut exs);
         }
     }
+    let per_page = 5usize;
+    let total_pages = (all.len() + per_page - 1) / per_page;
+    let page = page.clamp(1, total_pages.max(1));
+    let start = (page - 1) * per_page;
+    let end = start + per_page.min(all.len().saturating_sub(start));
+    let page_items = &all[start..end];
+    let (text, has_next, has_prev) = build_exchanges_page_text(page_items, page, total_pages.max(1));
 
-    let text = lines.join("\n");
-    bot.send_message(msg.chat.id, text).parse_mode(teloxide::types::ParseMode::MarkdownV2).await?;
+    let mut kb_rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    if has_prev || has_next {
+        let mut row = Vec::new();
+        if has_prev {
+            row.push(InlineKeyboardButton::callback("◀️", format!("menu:exchanges:p{}", page - 1)));
+        }
+        row.push(InlineKeyboardButton::callback(format!("{}/{}", page, total_pages.max(1)), "noop"));
+        if has_next {
+            row.push(InlineKeyboardButton::callback("▶️", format!("menu:exchanges:p{}", page + 1)));
+        }
+        kb_rows.push(row);
+    }
+    kb_rows.push(vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu:back")]);
+    let kb = InlineKeyboardMarkup::new(kb_rows);
+
+    bot.send_message(msg.chat.id, text)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(kb)
+        .await?;
     Ok(())
 }
 
@@ -688,5 +705,32 @@ mod tests {
         };
         let _ = bot_state.wallet.btc_address(0);
         let _ = bot_state.config.admin_user_id;
+    }
+
+    #[test]
+    fn test_exchanges_page_text() {
+        let exchanges = vec![
+            crate::database::ExchangeRequest {
+                id: "aaa".into(), chain: "tron".into(),
+                deposit_address: "addr1".into(), btc_address: "btc1".into(),
+                status: "pending".into(),
+                usdt_amount: Some(100.0), btc_amount: Some(0.001),
+                created_at: 1000, expires_at: 2000,
+            },
+        ];
+        let (text, has_next, has_prev) = build_exchanges_page_text(&exchanges, 1, 1);
+        assert!(text.contains("aaa"));
+        assert!(text.contains("100.00"));
+        assert!(text.contains("0.00100000"));
+        assert!(!has_next);
+        assert!(!has_prev);
+    }
+
+    #[test]
+    fn test_exchanges_page_text_empty() {
+        let (text, has_next, has_prev) = build_exchanges_page_text(&[], 1, 1);
+        assert!(text.contains("No exchanges"));
+        assert!(!has_next);
+        assert!(!has_prev);
     }
 }
