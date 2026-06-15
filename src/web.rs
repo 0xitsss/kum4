@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use crate::config::Config;
 use crate::database::Database;
 use crate::error::{Kum4Error, Result};
-use crate::p2p::P2pState;
+use crate::p2p::{P2pState, PeerRegistry};
 use crate::wallet::Wallet;
 
 fn require_auth(config: &Config, headers: &HeaderMap) -> Result<()> {
@@ -32,6 +32,8 @@ pub struct AppState {
     pub peer_id: String,
     pub uptime_start: tokio::time::Instant,
     pub p2p_state: Arc<P2pState>,
+    #[allow(dead_code)]
+    pub peer_registry: Arc<PeerRegistry>,
 }
 
 pub fn router(state: Arc<AppState>) -> Router {

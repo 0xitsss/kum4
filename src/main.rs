@@ -15,6 +15,7 @@ mod tor_client;
 mod wallet;
 mod web;
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use secp256k1::Secp256k1;
@@ -24,6 +25,7 @@ use crate::bitcoin_tx::BitcoinTxBuilder;
 use crate::config::Config;
 use crate::database::Database;
 use crate::dht::{DhtCmd, DhtEvent, DhtNode, NodeInfo};
+use crate::gossip::{gossip_task, ping_task};
 use crate::monitor::Monitor;
 use crate::p2p::{new_peer_registry, call_node_redirect, call_node_reserve, PeerRegistry, P2pState, RedirectRequest};
 use crate::rebalance::RebalanceEngine;
@@ -122,7 +124,7 @@ async fn main() -> error::Result<()> {
     };
 
     // --- Peer registry (shared across DHT + deposit handler) ---
-    let peer_registry: PeerRegistry = new_peer_registry();
+    let peer_registry: Arc<PeerRegistry> = Arc::new(new_peer_registry());
 
     // --- DHT & peer identity: Tor mode only ---
     let peer_id: String;
@@ -176,6 +178,35 @@ async fn main() -> error::Result<()> {
                     }
                 }
             }
+        });
+
+        // Build local NodeInfo for gossip
+        let local_info = NodeInfo {
+            peer_id: peer_id.clone(),
+            http_addr: format!("http://127.0.0.1:{}", config.node_port),
+            fee_usd: config.profit_fee_usd,
+            chains: vec!["tron".into(), "bsc".into()],
+            btc_reserve: 0.0,
+            status: "online".into(),
+            version: config.node_version.clone(),
+            reserve_updated: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            last_seen: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+        };
+
+        let gossip_addr: SocketAddr = format!("0.0.0.0:{}", config.node_port + 2)
+            .parse().expect("Invalid gossip address");
+
+        let gossip_registry = peer_registry.clone();
+        tokio::spawn(async move {
+            gossip_task(gossip_registry, local_info, gossip_addr).await;
+        });
+
+        let ping_registry = peer_registry.clone();
+        let ping_http = http_client.clone();
+        tokio::spawn(async move {
+            ping_task(ping_registry, ping_http).await;
         });
     } else {
         peer_id = peer_id_from_seed(&seed_phrase);
@@ -338,6 +369,7 @@ async fn main() -> error::Result<()> {
         peer_id,
         uptime_start,
         p2p_state,
+        peer_registry: peer_registry.clone(),
     });
 
     let addr = format!("{}:{}", config.web_host, config.node_port);

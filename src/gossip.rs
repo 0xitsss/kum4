@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -101,6 +102,48 @@ async fn merge_gossip(registry: &Arc<PeerRegistry>, msg: &GossipMessage) {
     }
     registry.update(msg.sender.clone()).await;
     registry.remove_stale(now).await;
+}
+
+pub async fn ping_task(
+    registry: Arc<PeerRegistry>,
+    http_client: reqwest::Client,
+) {
+    use rand::seq::IteratorRandom;
+    let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(120));
+    let mut fail_count: HashMap<String, u32> = HashMap::new();
+    loop {
+        interval.tick().await;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let peers = registry.all_active(now).await;
+        let selected: Vec<&crate::dht::NodeInfo> = {
+            let mut rng = rand::thread_rng();
+            peers.iter().choose_multiple(&mut rng, 5)
+        };
+        for peer in selected {
+            let url = format!("{}/api/p2p/ping", peer.http_addr.trim_end_matches('/'));
+            match http_client.get(&url).send().await {
+                Ok(_) => {
+                    fail_count.remove(&peer.peer_id);
+                    let mut map = registry.write().await;
+                    if let Some(node) = map.get_mut(&peer.peer_id) {
+                        node.status = "online".into();
+                        node.last_seen = now;
+                    }
+                }
+                Err(_) => {
+                    let count = fail_count.entry(peer.peer_id.clone()).or_insert(0);
+                    *count += 1;
+                    if *count >= 3 {
+                        let mut map = registry.write().await;
+                        if let Some(node) = map.get_mut(&peer.peer_id) {
+                            node.status = "offline".into();
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
