@@ -199,6 +199,49 @@ fn exchange_detail(exchange: &crate::database::ExchangeRequest) -> String {
     )
 }
 
+fn build_reserve_text(address: &str, utxos: &[UtxoJson], confirmed_sats: u64, unconfirmed_sats: u64, pending_btc: f64) -> String {
+    let balance = sats_to_btc(confirmed_sats + unconfirmed_sats);
+    let utxo_total: u64 = utxos.iter().map(|u| u.value).sum();
+    let confirmed_count = utxos.iter().filter(|u| u.status.confirmed).count();
+    let unconfirmed_count = utxos.iter().filter(|u| !u.status.confirmed).count();
+    let mut utxo_lines: Vec<String> = Vec::new();
+    let show = utxos.iter().take(10);
+    for (i, u) in show.enumerate() {
+        let short_txid: String = u.txid.chars().take(12).collect();
+        let conf: String = if u.status.confirmed {
+            " (confirmed)".into()
+        } else {
+            " (unconfirmed)".into()
+        };
+        utxo_lines.push(format!("{}. `{}` — {:.8} BTC{}", i + 1, short_txid, sats_to_btc(u.value), conf));
+    }
+    if utxos.len() > 10 {
+        utxo_lines.push(format!("... and {} more", utxos.len() - 10));
+    }
+    let utxo_section = if utxo_lines.is_empty() {
+        "No UTXOs".into()
+    } else {
+        utxo_lines.join("\n")
+    };
+    let low = reserve_is_low(sats_to_btc(utxo_total), pending_btc);
+    let warning = if low {
+        format!("\n⚠️ *Warning:* Reserve below 1.2× pending ({:.8} BTC needed)!", pending_btc * 1.2)
+    } else {
+        "\n✅ Reserve adequate.".into()
+    };
+    format!(
+        "🏦 *BTC Reserve*\n\n\
+         Address: `{addr}`\n\
+         Balance: `{bal:.8}` BTC\n\
+         UTXOs: {conf} confirmed, {unconf} unconfirmed\n\
+         Pending outgoing: `{pend:.8}` BTC\n\n\
+         {utxos}{warn}",
+        addr = address, bal = balance,
+        conf = confirmed_count, unconf = unconfirmed_count,
+        pend = pending_btc, utxos = utxo_section, warn = warning,
+    )
+}
+
 fn build_dashboard_text(tron_pending: usize, bsc_pending: usize, n_reviews: usize, btc_balance: f64) -> String {
     let total = tron_pending + bsc_pending;
     let warning = if n_reviews > 0 {
@@ -344,25 +387,17 @@ async fn cmd_reserve(bot: Bot, msg: Message, state: Arc<BotState>) -> Result<()>
         bot.send_message(msg.chat.id, &deny).await?;
         return Ok(());
     }
-
-    let pending_total = state.db.get_pending_total_btc().unwrap_or(0.0);
-    let reserve_val = 0.0;
-    let status = "unknown";
-
-    let text = format!(
-        "🏦 *BTC Reserve*\n\n\
-         Reserve: `{:.8}` BTC\n\
-         Status: `{}`\n\
-         Pending total: `{:.8}` BTC\n\
-         {}",
-        reserve_val, status, pending_total,
-        if pending_total > 0.0 && reserve_val < pending_total * 1.2 {
-            "⚠️ *Warning:* Reserve below 1.2× pending total!"
-        } else {
-            "✅ Reserve adequate."
-        }
-    );
-    bot.send_message(msg.chat.id, text).parse_mode(teloxide::types::ParseMode::MarkdownV2).await?;
+    let reserve_addr = state.wallet.btc_address(state.config.btc_reserve_index)?;
+    let pending_btc = state.db.get_pending_total_btc().unwrap_or(0.0);
+    let (utxos, confirmed, unconfirmed) = fetch_btc_balance(
+        &state.http_client, &state.config.mempool_url,
+        &reserve_addr.to_string(),
+    ).await.unwrap_or((vec![], 0, 0));
+    let text = build_reserve_text(&reserve_addr.to_string(), &utxos, confirmed, unconfirmed, pending_btc);
+    bot.send_message(msg.chat.id, text)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(back_kb())
+        .await?;
     Ok(())
 }
 
@@ -732,5 +767,42 @@ mod tests {
         assert!(text.contains("No exchanges"));
         assert!(!has_next);
         assert!(!has_prev);
+    }
+
+    #[test]
+    fn test_reserve_text_format() {
+        let utxos = vec![
+            UtxoJson {
+                txid: "abc123".into(), vout: 0, value: 50_000_000,
+                status: UtxoStatus { confirmed: true, block_height: Some(800000) },
+            },
+        ];
+        let text = build_reserve_text("bc1q...", &utxos, 50_000_000, 0, 0.001);
+        assert!(text.contains("bc1q"));
+        assert!(text.contains("0.50000000"));
+        assert!(text.contains("abc123"));
+    }
+
+    #[test]
+    fn test_reserve_warning_text() {
+        let text = build_reserve_text("addr", &[], 100_000_000, 0, 0.5);
+        assert!(text.contains("⚠️"));
+    }
+
+    #[test]
+    fn test_reserve_adequate_text() {
+        let text = build_reserve_text("addr", &[], 100_000_000, 0, 0.0);
+        assert!(text.contains("✅"));
+    }
+
+    #[test]
+    fn test_reserve_many_utxos() {
+        let utxos: Vec<UtxoJson> = (0..15).map(|i| UtxoJson {
+            txid: format!("tx{:012}", i), vout: 0, value: 10_000_000,
+            status: UtxoStatus { confirmed: true, block_height: Some(800000) },
+        }).collect();
+        let text = build_reserve_text("addr", &utxos, 150_000_000, 0, 0.0);
+        assert!(text.contains("... and 5 more"));
+        assert_eq!(text.matches("tx").count(), 10);
     }
 }
