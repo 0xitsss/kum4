@@ -128,6 +128,28 @@ fn admin_only(msg: Message, state: Arc<BotState>) -> String {
     String::new()
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum CallbackAction {
+    Menu(String),
+    Exchange(String),
+    Resolve(String),
+    ResolveReview(String),
+}
+
+fn parse_callback(data: &str) -> CallbackAction {
+    if let Some(id) = data.strip_prefix("exch:") {
+        CallbackAction::Exchange(id.to_string())
+    } else if let Some(id) = data.strip_prefix("resolve_review:") {
+        CallbackAction::ResolveReview(id.to_string())
+    } else if let Some(id) = data.strip_prefix("resolve:") {
+        CallbackAction::Resolve(id.to_string())
+    } else if let Some(target) = data.strip_prefix("menu:") {
+        CallbackAction::Menu(target.to_string())
+    } else {
+        CallbackAction::Menu("unknown".into())
+    }
+}
+
 fn build_exchange_kb(exchange: &crate::database::ExchangeRequest) -> InlineKeyboardMarkup {
     let mut kb: Vec<Vec<InlineKeyboardButton>> = Vec::new();
     let mut row = Vec::new();
@@ -389,6 +411,45 @@ async fn cmd_exchanges_page(bot: Bot, msg: Message, state: Arc<BotState>, page: 
     Ok(())
 }
 
+async fn show_exchanges_page(bot: &Bot, chat_id: ChatId, msg_id: Option<MessageId>, state: &Arc<BotState>, page: usize) -> Result<()> {
+    let mut all: Vec<crate::database::ExchangeRequest> = Vec::new();
+    for chain in &["tron", "bsc"] {
+        if let Ok(mut exs) = state.db.get_pending_exchanges(chain) {
+            all.append(&mut exs);
+        }
+    }
+    let per_page = 5usize;
+    let total_pages = (all.len() + per_page - 1) / per_page;
+    let page = page.clamp(1, total_pages.max(1));
+    let start = (page - 1) * per_page;
+    let end = start + per_page.min(all.len().saturating_sub(start));
+    let page_items = &all[start..end];
+    let (text, has_next, has_prev) = build_exchanges_page_text(page_items, page, total_pages.max(1));
+
+    let mut kb_rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    if has_prev || has_next {
+        let mut row = Vec::new();
+        if has_prev {
+            row.push(InlineKeyboardButton::callback("◀️", format!("menu:exchanges:p{}", page - 1)));
+        }
+        row.push(InlineKeyboardButton::callback(format!("{}/{}", page, total_pages.max(1)), "noop"));
+        if has_next {
+            row.push(InlineKeyboardButton::callback("▶️", format!("menu:exchanges:p{}", page + 1)));
+        }
+        kb_rows.push(row);
+    }
+    kb_rows.push(vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu:back")]);
+    let kb = InlineKeyboardMarkup::new(kb_rows);
+
+    if let Some(mid) = msg_id {
+        bot.edit_message_text(chat_id, mid, text)
+            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+            .reply_markup(kb)
+            .await?;
+    }
+    Ok(())
+}
+
 async fn cmd_exchange(bot: Bot, msg: Message, state: Arc<BotState>, args: String) -> Result<()> {
     let deny = admin_only(msg.clone(), state.clone());
     if !deny.is_empty() {
@@ -558,13 +619,97 @@ fn msg_id_val(msg: &MaybeInaccessibleMessage) -> Option<MessageId> {
 }
 
 async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> Result<()> {
-    if let Some(data) = q.data {
-        let chat_id = q.message.as_ref().map(msg_chat_id).unwrap_or(ChatId(0));
-        let msg_id = q.message.as_ref().and_then(msg_id_val);
+    let data = match q.data {
+        Some(d) => d,
+        None => return Ok(()),
+    };
+    let chat_id = q.message.as_ref().map(msg_chat_id).unwrap_or(ChatId(0));
+    let msg_id = q.message.as_ref().and_then(msg_id_val);
+    let action = parse_callback(&data);
 
-        if data.starts_with("exch:") {
-            let id = data.trim_start_matches("exch:");
-            if let Ok(Some(ex)) = state.db.get_exchange(id) {
+    match action {
+        CallbackAction::Menu(target) => {
+            match target.as_str() {
+                "dashboard" => {
+                    let tron = state.db.get_pending_exchanges("tron").unwrap_or_default().len();
+                    let bsc = state.db.get_pending_exchanges("bsc").unwrap_or_default().len();
+                    let reviews = state.db.get_manual_reviews().unwrap_or_default().len();
+                    let reserve_addr = state.wallet.btc_address(state.config.btc_reserve_index)?;
+                    let (_utxos, confirmed, unconfirmed) = fetch_btc_balance(
+                        &state.http_client, &state.config.mempool_url,
+                        &reserve_addr.to_string(),
+                    ).await.unwrap_or((vec![], 0, 0));
+                    let balance = sats_to_btc(confirmed + unconfirmed);
+                    let text = build_dashboard_text(tron, bsc, reviews, balance);
+                    if let Some(mid) = msg_id {
+                        bot.edit_message_text(chat_id, mid, text)
+                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                            .reply_markup(back_kb())
+                            .await?;
+                    }
+                }
+                "exchanges" | "exchanges:p1" => {
+                    show_exchanges_page(&bot, chat_id, msg_id, &state, 1).await?;
+                }
+                p if p.starts_with("exchanges:p") => {
+                    let page: usize = p.trim_start_matches("exchanges:p").parse().unwrap_or(1);
+                    show_exchanges_page(&bot, chat_id, msg_id, &state, page).await?;
+                }
+                "reserve" => {
+                    let reserve_addr = state.wallet.btc_address(state.config.btc_reserve_index)?;
+                    let pending_btc = state.db.get_pending_total_btc().unwrap_or(0.0);
+                    let (utxos, confirmed, unconfirmed) = fetch_btc_balance(
+                        &state.http_client, &state.config.mempool_url,
+                        &reserve_addr.to_string(),
+                    ).await.unwrap_or((vec![], 0, 0));
+                    let text = build_reserve_text(&reserve_addr.to_string(), &utxos, confirmed, unconfirmed, pending_btc);
+                    if let Some(mid) = msg_id {
+                        bot.edit_message_text(chat_id, mid, text)
+                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                            .reply_markup(back_kb())
+                            .await?;
+                    }
+                }
+                "system" => {
+                    let tron_ok = state.http_client
+                        .post(&state.config.tron_rpc_url)
+                        .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}))
+                        .send().await.is_ok();
+                    let bsc_ok = state.http_client
+                        .post(&state.config.bsc_rpc_url)
+                        .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}))
+                        .send().await.is_ok();
+                    let text = build_system_text(env!("CARGO_PKG_VERSION"), &state.config.node_id, tron_ok, bsc_ok);
+                    if let Some(mid) = msg_id {
+                        bot.edit_message_text(chat_id, mid, text)
+                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                            .reply_markup(back_kb())
+                            .await?;
+                    }
+                }
+                "reviews" => {
+                    let reviews = state.db.get_manual_reviews().unwrap_or_default();
+                    let (text, kb) = build_reviews_view(&reviews);
+                    if let Some(mid) = msg_id {
+                        bot.edit_message_text(chat_id, mid, text)
+                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                            .reply_markup(kb)
+                            .await?;
+                    }
+                }
+                "back" => {
+                    if let Some(mid) = msg_id {
+                        bot.edit_message_text(chat_id, mid, main_menu_text())
+                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                            .reply_markup(main_menu_kb())
+                            .await?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        CallbackAction::Exchange(id) => {
+            if let Ok(Some(ex)) = state.db.get_exchange(&id) {
                 let kb = build_exchange_kb(&ex);
                 if let Some(mid) = msg_id {
                     bot.edit_message_text(chat_id, mid, exchange_detail(&ex))
@@ -575,9 +720,9 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
             } else {
                 bot.answer_callback_query(q.id).text("Exchange not found").await?;
             }
-        } else if data.starts_with("resolve:") {
-            let id = data.trim_start_matches("resolve:");
-            let exchange = state.db.get_exchange(id)?;
+        }
+        CallbackAction::Resolve(id) => {
+            let exchange = state.db.get_exchange(&id)?;
             match exchange {
                 Some(ex) => {
                     let usdt = ex.usdt_amount.unwrap_or(0.0);
@@ -585,12 +730,10 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
                     let fee = 1.0;
                     let net = usdt - fee;
                     let btc_amount = if net > 0.0 { net / btc_price } else { 0.0 };
-
                     if usdt > 0.0 {
                         let _ = state.db.set_exchange_amounts(&ex.id, usdt, btc_amount);
                     }
                     let _ = state.db.set_exchange_status(&ex.id, "deposit_detected");
-
                     let chain = if ex.chain == "bsc" { Chain::Bsc } else { Chain::Tron };
                     let deposit_event = DepositEvent {
                         chain,
@@ -600,7 +743,6 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
                         usdt_amount: usdt.max(0.0),
                         block_number: 0,
                     };
-
                     match state.deposit_tx.send(deposit_event).await {
                         Ok(_) => {
                             bot.answer_callback_query(q.id)
@@ -608,7 +750,7 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
                                 .await?;
                             if let Some(mid) = msg_id {
                                 let _ = bot.edit_message_text(chat_id, mid, format!(
-                                    "✅ *Resolved*\n\nExchange `{}`\nUSDT: `{:.2}` → BTC: `{:.8}`\n\nProcessing BTC send...",
+                                    "✅ *Resolved*\n\nExchange `{}`\nUSDT: `{:.2}` → BTC: `{:.8}`",
                                     ex.id, usdt, btc_amount
                                 )).parse_mode(teloxide::types::ParseMode::MarkdownV2).await;
                             }
@@ -620,6 +762,57 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
                 }
                 None => {
                     bot.answer_callback_query(q.id).text("Exchange not found").await?;
+                }
+            }
+        }
+        CallbackAction::ResolveReview(tx_hash) => {
+            let reviews = state.db.get_manual_reviews()?;
+            let review = reviews.iter().find(|r| r["tx_hash"].as_str().unwrap_or("") == tx_hash).cloned();
+            match review {
+                Some(r) => {
+                    let to_addr = r["to_address"].as_str().unwrap_or("");
+                    let got = r["got_amount"].as_f64().unwrap_or(0.0);
+                    let chain_str = r["chain"].as_str().unwrap_or("tron");
+                    let exchange = state.db.find_exchange_by_address(to_addr)?;
+                    match exchange {
+                        Some(ex) => {
+                            let btc_price = 100_000.0;
+                            let fee = 1.0;
+                            let net = got - fee;
+                            let btc_amount = if net > 0.0 { net / btc_price } else { 0.0 };
+                            let _ = state.db.set_exchange_amounts(&ex.id, got, btc_amount);
+                            let _ = state.db.set_exchange_status(&ex.id, "deposit_detected");
+                            let chain = if chain_str == "bsc" { Chain::Bsc } else { Chain::Tron };
+                            let deposit_event = DepositEvent {
+                                chain,
+                                tx_hash: tx_hash.clone(),
+                                from_address: r["from_address"].as_str().unwrap_or("").to_string(),
+                                to_address: to_addr.to_string(),
+                                usdt_amount: got,
+                                block_number: 0,
+                            };
+                            match state.deposit_tx.send(deposit_event).await {
+                                Ok(_) => {
+                                    bot.answer_callback_query(q.id).text("✅ Resolved").await?;
+                                    if let Some(mid) = msg_id {
+                                        let _ = bot.edit_message_text(chat_id, mid, format!(
+                                            "✅ *Resolved* `{}`\n\nUSDT: `{:.2}` → BTC: `{:.8}`",
+                                            tx_hash, got, btc_amount
+                                        )).parse_mode(teloxide::types::ParseMode::MarkdownV2).await;
+                                    }
+                                }
+                                Err(e) => {
+                                    bot.answer_callback_query(q.id).text(format!("Error: {e}")).await?;
+                                }
+                            }
+                        }
+                        None => {
+                            bot.answer_callback_query(q.id).text("No matching exchange").await?;
+                        }
+                    }
+                }
+                None => {
+                    bot.answer_callback_query(q.id).text("Review not found").await?;
                 }
             }
         }
@@ -899,5 +1092,32 @@ mod tests {
         let (text, _kb) = build_reviews_view(&reviews);
         assert!(text.contains("Manual Reviews: 2"));
         assert!(text.contains("200.00"));
+    }
+
+    #[test]
+    fn test_parse_callback_menu() {
+        assert_eq!(parse_callback("menu:dashboard"), CallbackAction::Menu("dashboard".into()));
+        assert_eq!(parse_callback("menu:exchanges"), CallbackAction::Menu("exchanges".into()));
+        assert_eq!(parse_callback("menu:back"), CallbackAction::Menu("back".into()));
+    }
+
+    #[test]
+    fn test_parse_callback_exch() {
+        assert_eq!(parse_callback("exch:abc123"), CallbackAction::Exchange("abc123".into()));
+    }
+
+    #[test]
+    fn test_parse_callback_resolve() {
+        assert_eq!(parse_callback("resolve:abc123"), CallbackAction::Resolve("abc123".into()));
+    }
+
+    #[test]
+    fn test_parse_callback_resolve_review() {
+        assert_eq!(parse_callback("resolve_review:txhash123"), CallbackAction::ResolveReview("txhash123".into()));
+    }
+
+    #[test]
+    fn test_parse_callback_unknown() {
+        assert_eq!(parse_callback("garbage"), CallbackAction::Menu("unknown".into()));
     }
 }
