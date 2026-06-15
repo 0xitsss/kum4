@@ -5,6 +5,9 @@ on:
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
 
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -22,7 +25,6 @@ jobs:
           draft: false
           prerelease: false
           generate_release_notes: true
-          token: ${{ secrets.GITHUB_TOKEN }}
 
   build-linux:
     needs: create-release
@@ -36,7 +38,6 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: kum4-${{ github.ref_name }}-x86_64-unknown-linux-gnu.tar.gz
-          token: ${{ secrets.GITHUB_TOKEN }}
 
   build-windows:
     needs: create-release
@@ -50,4 +51,3 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: kum4-${{ github.ref_name }}-x86_64-pc-windows-msvc.zip
-          token: ${{ secrets.GITHUB_TOKEN }}
