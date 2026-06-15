@@ -106,8 +106,9 @@ fn main_menu_kb() -> InlineKeyboardMarkup {
 }
 
 fn back_kb() -> InlineKeyboardMarkup {
-    let mut kb: Vec<Vec<InlineKeyboardButton>> = Vec::new();
-    kb.push(vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu:back")]);
+    let kb = vec![
+        vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu:back")]
+    ];
     InlineKeyboardMarkup::new(kb)
 }
 
@@ -196,6 +197,48 @@ fn exchange_detail(exchange: &crate::database::ExchangeRequest) -> String {
         created = fmt_time(exchange.created_at),
         expires = fmt_time(exchange.expires_at),
     )
+}
+
+fn build_dashboard_text(tron_pending: usize, bsc_pending: usize, n_reviews: usize, btc_balance: f64) -> String {
+    let total = tron_pending + bsc_pending;
+    let warning = if n_reviews > 0 {
+        format!("\n⚠️ {} manual review{} pending", n_reviews, if n_reviews == 1 { "" } else { "s" })
+    } else {
+        String::new()
+    };
+    format!(
+        "📊 *Dashboard*\n\n\
+         💱 Pending exchanges: {total} (TRON: {tron}, BSC: {bsc})\n\
+         🏦 BTC Reserve: `{btc:.8}` BTC\n\
+         🔍 Manual reviews: {n}{warning}\n\
+         🩺 System: ✅ running",
+        total = total, tron = tron_pending, bsc = bsc_pending,
+        btc = btc_balance, n = n_reviews, warning = warning,
+    )
+}
+
+async fn cmd_dashboard(bot: Bot, msg: Message, state: Arc<BotState>) -> Result<()> {
+    let deny = admin_only(msg.clone(), state.clone());
+    if !deny.is_empty() {
+        bot.send_message(msg.chat.id, &deny).await?;
+        return Ok(());
+    }
+
+    let tron = state.db.get_pending_exchanges("tron").unwrap_or_default().len();
+    let bsc = state.db.get_pending_exchanges("bsc").unwrap_or_default().len();
+    let reviews = state.db.get_manual_reviews().unwrap_or_default().len();
+    let reserve_addr = state.wallet.btc_address(state.config.btc_reserve_index)?;
+    let (_utxos, confirmed, unconfirmed) = fetch_btc_balance(
+        &state.http_client, &state.config.mempool_url,
+        &reserve_addr.to_string(),
+    ).await.unwrap_or((vec![], 0, 0));
+    let balance = sats_to_btc(confirmed + unconfirmed);
+    let text = build_dashboard_text(tron, bsc, reviews, balance);
+    bot.send_message(msg.chat.id, text)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(back_kb())
+        .await?;
+    Ok(())
 }
 
 async fn cmd_start(bot: Bot, msg: Message, state: Arc<BotState>) -> Result<()> {
@@ -502,6 +545,8 @@ pub async fn run(state: Arc<BotState>) {
                     cmd_exchanges(bot, msg, state).await
                 } else if let Some(args) = text.strip_prefix("/exchange ") {
                     cmd_exchange(bot, msg, state, args.to_string()).await
+                } else if text.starts_with("/dashboard") {
+                    cmd_dashboard(bot, msg, state).await
                 } else if text.starts_with("/reserve") {
                     cmd_reserve(bot, msg, state).await
                 } else if text.starts_with("/health") {
@@ -588,6 +633,23 @@ mod tests {
     fn test_format_utxo_summary() {
         let result = format_utxo_summary(&[], 0, 0);
         assert!(result.contains("0.00000000"));
+    }
+
+    #[test]
+    fn test_dashboard_text_format() {
+        let text = build_dashboard_text(3, 2, 1, 0.12345678);
+        assert!(text.contains("Pending"));
+        assert!(text.contains("0.12345678"));
+        assert!(text.contains("TRON: 3"));
+        assert!(text.contains("BSC: 2"));
+        assert!(text.contains("Manual reviews: 1"));
+    }
+
+    #[test]
+    fn test_dashboard_text_empty() {
+        let text = build_dashboard_text(0, 0, 0, 0.0);
+        assert!(text.contains("Pending exchanges: 0"));
+        assert!(text.contains("0.00000000"));
     }
 
     #[test]
