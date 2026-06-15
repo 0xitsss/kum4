@@ -21,6 +21,8 @@ pub struct NodeInfo {
     pub status: String,
     pub version: String,
     pub reserve_updated: u64,
+    #[serde(default)]
+    pub last_seen: u64,
 }
 
 #[allow(dead_code)]
