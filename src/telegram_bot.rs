@@ -199,6 +199,20 @@ fn exchange_detail(exchange: &crate::database::ExchangeRequest) -> String {
     )
 }
 
+fn build_system_text(version: &str, node_id: &str, tron_ok: bool, bsc_ok: bool) -> String {
+    let tron_icon = if tron_ok { "✅" } else { "❌" };
+    let bsc_icon = if bsc_ok { "✅" } else { "❌" };
+    format!(
+        "⚙️ *System*\n\n\
+         Bot: ✅ running\n\
+         Version: `{}`\n\
+         Node: `{}`\n\
+         TRON RPC: {}\n\
+         BSC RPC:  {}",
+        version, node_id, tron_icon, bsc_icon,
+    )
+}
+
 fn build_reserve_text(address: &str, utxos: &[UtxoJson], confirmed_sats: u64, unconfirmed_sats: u64, pending_btc: f64) -> String {
     let balance = sats_to_btc(confirmed_sats + unconfirmed_sats);
     let utxo_total: u64 = utxos.iter().map(|u| u.value).sum();
@@ -407,19 +421,19 @@ async fn cmd_health(bot: Bot, msg: Message, state: Arc<BotState>) -> Result<()> 
         bot.send_message(msg.chat.id, &deny).await?;
         return Ok(());
     }
-
-    let pending_total = state.db.get_pending_total_btc().unwrap_or(0.0);
-    let text = format!(
-        "🩺 *System Health*\n\n\
-         Bot: ✅ running\n\
-         Pending BTC total: `{:.8}`\n\
-         Version: `{}`\n\
-         Node: `{}`",
-        pending_total,
-        env!("CARGO_PKG_VERSION"),
-        state.config.node_id,
-    );
-    bot.send_message(msg.chat.id, text).parse_mode(teloxide::types::ParseMode::MarkdownV2).await?;
+    let tron_ok = state.http_client
+        .post(&state.config.tron_rpc_url)
+        .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}))
+        .send().await.is_ok();
+    let bsc_ok = state.http_client
+        .post(&state.config.bsc_rpc_url)
+        .json(&serde_json::json!({"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}))
+        .send().await.is_ok();
+    let text = build_system_text(env!("CARGO_PKG_VERSION"), &state.config.node_id, tron_ok, bsc_ok);
+    bot.send_message(msg.chat.id, text)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(back_kb())
+        .await?;
     Ok(())
 }
 
@@ -793,6 +807,20 @@ mod tests {
     fn test_reserve_adequate_text() {
         let text = build_reserve_text("addr", &[], 100_000_000, 0, 0.0);
         assert!(text.contains("✅"));
+    }
+
+    #[test]
+    fn test_system_text_format() {
+        let text = build_system_text("1.0.0", "node1", true, true);
+        assert!(text.contains("1.0.0"));
+        assert!(text.contains("node1"));
+        assert!(text.contains("✅"));
+    }
+
+    #[test]
+    fn test_system_text_rpc_failure() {
+        let text = build_system_text("1.0.0", "node1", false, true);
+        assert!(text.contains("❌"));
     }
 
     #[test]
