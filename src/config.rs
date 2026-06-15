@@ -21,6 +21,13 @@ pub struct Config {
     pub tor_proxy: String,
     pub node_port: u16,
     pub web_host: String,
+    pub btc_reserve_index: u32,
+    pub admin_token: String,
+    pub max_pending_per_chain: usize,
+    pub tron_confirmations: u64,
+    pub bsc_confirmations: u64,
+    pub bot_token: String,
+    pub admin_user_id: i64,
 }
 
 impl Config {
@@ -64,6 +71,28 @@ impl Config {
                 .parse()
                 .map_err(|e| Kum4Error::Config(format!("NODE_PORT parse: {e}")))?,
             web_host: env::var("WEB_HOST").unwrap_or_else(|_| "127.0.0.1".into()),
+            btc_reserve_index: env::var("BTC_RESERVE_INDEX")
+                .unwrap_or_else(|_| "0".into())
+                .parse()
+                .map_err(|e| Kum4Error::Config(format!("BTC_RESERVE_INDEX parse: {e}")))?,
+            admin_token: env::var("ADMIN_TOKEN").unwrap_or_default(),
+            max_pending_per_chain: env::var("MAX_PENDING_PER_CHAIN")
+                .unwrap_or_else(|_| "20".into())
+                .parse()
+                .map_err(|e| Kum4Error::Config(format!("MAX_PENDING_PER_CHAIN parse: {e}")))?,
+            tron_confirmations: env::var("TRON_CONFIRMATIONS")
+                .unwrap_or_else(|_| "19".into())
+                .parse()
+                .map_err(|e| Kum4Error::Config(format!("TRON_CONFIRMATIONS parse: {e}")))?,
+            bsc_confirmations: env::var("BSC_CONFIRMATIONS")
+                .unwrap_or_else(|_| "6".into())
+                .parse()
+                .map_err(|e| Kum4Error::Config(format!("BSC_CONFIRMATIONS parse: {e}")))?,
+            bot_token: env::var("BOT_TOKEN").unwrap_or_default(),
+            admin_user_id: env::var("ADMIN_USER_ID")
+                .unwrap_or_else(|_| "0".into())
+                .parse()
+                .map_err(|e| Kum4Error::Config(format!("ADMIN_USER_ID parse: {e}")))?,
         };
 
         Ok(cfg)

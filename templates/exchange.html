@@ -209,9 +209,9 @@ body::before{content:'';position:fixed;inset:0;background:radial-gradient(ellips
         </div>
     </div>
 
-    <div class="refresh-bar" x-show="!loading && !error && data && data.status === 'pending'">
+    <div class="refresh-bar" x-show="!loading && !error && data && ['pending', 'deposit_detected', 'sending', 'sent'].includes(data.status)">
         <span class="r-dot"></span>
-        <span>Auto-refreshing every 10s</span>
+        <span x-text="data.status === 'sent' ? 'Waiting for confirmation' : 'Auto-refreshing every 10s'"></span>
     </div>
 
     <div class="toast" :class="{ show: toastShow }">
@@ -245,41 +245,49 @@ function app() {
             switch(this.data.status) {
                 case 'pending': return '⏳';
                 case 'deposit_detected': return '🔍';
+                case 'sending': return '🔄';
+                case 'sent': return '✅';
+                case 'confirmed': return '✅';
                 case 'completed': return '✅';
+                case 'error': return '❌';
                 case 'expired': return '❌';
                 default: return '⏳';
             }
         },
         get statusIconClass() {
             if (!this.data) return '';
-            return this.data.status === 'pending' ? 'pending' : 'done';
+            const p = ['pending', 'sending', 'error'];
+            return p.includes(this.data.status) ? 'pending' : 'done';
         },
         get statusLabel() {
             if (!this.data) return '';
             switch(this.data.status) {
                 case 'pending': return 'Awaiting Deposit';
                 case 'deposit_detected': return 'Deposit Detected';
+                case 'sending': return 'Sending BTC';
+                case 'sent': return 'BTC Sent';
+                case 'confirmed': return 'Confirmed';
                 case 'completed': return 'Completed';
+                case 'error': return 'Processing Error';
                 case 'expired': return 'Expired';
                 default: return this.data.status;
             }
         },
         get statusClass() {
             if (!this.data) return '';
-            switch(this.data.status) {
-                case 'pending': return 'pending';
-                case 'deposit_detected': return 'detected';
-                case 'completed': return 'done';
-                case 'expired': return 'pending';
-                default: return '';
-            }
+            const m = { pending: 'pending', deposit_detected: 'detected', sending: 'pending', sent: 'done', confirmed: 'done', completed: 'done', error: 'pending', expired: 'pending' };
+            return m[this.data.status] || '';
         },
         get statusDesc() {
             if (!this.data) return '';
             switch(this.data.status) {
                 case 'pending': return 'Send USDT to the deposit address shown below. The system will automatically forward BTC to your wallet.';
                 case 'deposit_detected': return 'Your deposit has been confirmed. BTC is being prepared for transfer to your wallet.';
+                case 'sending': return 'BTC transaction is being broadcast to the network. This usually takes a few seconds.';
+                case 'sent': return 'BTC has been sent to your wallet. Waiting for on-chain confirmation.';
+                case 'confirmed': return 'BTC transaction confirmed on-chain. Check your wallet.';
                 case 'completed': return 'BTC has been sent to your wallet. Check your balance to confirm.';
+                case 'error': return 'An error occurred while processing. Please contact support.';
                 case 'expired': return 'This exchange has expired and is no longer valid. Please create a new one.';
                 default: return '';
             }
@@ -287,8 +295,11 @@ function app() {
 
         tlStep(idx) {
             if (!this.data) return '';
-            if (this.data.status === 'completed') return idx <= 2 ? 'done' : '';
-            if (this.data.status === 'deposit_detected') return idx <= 1 ? 'done' : (idx === 2 ? 'active' : '');
+            const s = this.data.status;
+            if (s === 'completed' || s === 'confirmed') return idx <= 2 ? 'done' : '';
+            if (s === 'sent') return idx <= 2 ? 'done' : '';
+            if (s === 'sending') return idx <= 1 ? 'done' : (idx === 2 ? 'active' : '');
+            if (s === 'deposit_detected') return idx <= 1 ? 'done' : (idx === 2 ? 'active' : '');
             return idx === 0 ? 'done' : (idx === 1 ? 'active' : '');
         },
 

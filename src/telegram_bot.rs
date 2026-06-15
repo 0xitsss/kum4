@@ -322,7 +322,7 @@ fn build_exchanges_page_text(exchanges: &[crate::database::ExchangeRequest], pag
     if exchanges.is_empty() {
         return ("✅ No exchanges to show.".into(), false, false);
     }
-    let lines: Vec<String> = exchanges.iter().map(|ex| exchange_summary(ex)).collect();
+    let lines: Vec<String> = exchanges.iter().map(exchange_summary).collect();
     let text = format!("💱 *Exchanges (стр {}/{})*\n\n{}", page, total_pages, lines.join("\n\n"));
     let has_prev = page > 1;
     let has_next = page < total_pages;
@@ -382,7 +382,7 @@ async fn cmd_exchanges_page(bot: Bot, msg: Message, state: Arc<BotState>, page: 
         }
     }
     let per_page = 5usize;
-    let total_pages = (all.len() + per_page - 1) / per_page;
+    let total_pages = all.len().div_ceil(per_page);
     let page = page.clamp(1, total_pages.max(1));
     let start = (page - 1) * per_page;
     let end = start + per_page.min(all.len().saturating_sub(start));
@@ -419,7 +419,7 @@ async fn show_exchanges_page(bot: &Bot, chat_id: ChatId, msg_id: Option<MessageI
         }
     }
     let per_page = 5usize;
-    let total_pages = (all.len() + per_page - 1) / per_page;
+    let total_pages = all.len().div_ceil(per_page);
     let page = page.clamp(1, total_pages.max(1));
     let start = (page - 1) * per_page;
     let end = start + per_page.min(all.len().saturating_sub(start));

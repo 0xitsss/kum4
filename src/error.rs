@@ -79,3 +79,9 @@ impl From<bitcoin::key::UncompressedPublicKeyError> for Kum4Error {
         Kum4Error::Bitcoin(e.to_string())
     }
 }
+
+impl From<teloxide::RequestError> for Kum4Error {
+    fn from(e: teloxide::RequestError) -> Self {
+        Kum4Error::Network(e.to_string())
+    }
+}

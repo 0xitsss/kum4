@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::Html;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -12,6 +12,16 @@ use crate::database::Database;
 use crate::error::{Kum4Error, Result};
 use crate::p2p::P2pState;
 use crate::wallet::Wallet;
+
+fn require_auth(config: &Config, headers: &HeaderMap) -> Result<()> {
+    if config.admin_token.is_empty() { return Ok(()); }
+    let auth = headers.get("Authorization").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let expected = format!("Bearer {}", config.admin_token);
+    if auth != expected {
+        return Err(Kum4Error::Config("Unauthorized: invalid or missing Bearer token".into()));
+    }
+    Ok(())
+}
 
 pub struct AppState {
     pub wallet: Arc<Wallet>,
@@ -36,6 +46,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/exchange", post(api_create_exchange))
         .route("/api/exchange/:id", get(api_get_exchange))
         .route("/exchange/:id", get(exchange_page))
+        .route("/api/admin/force-approve", post(api_force_approve))
         .with_state(state)
 }
 
@@ -146,10 +157,21 @@ struct HealthResponse {
     chains: Vec<String>,
     uptime_secs: u64,
     btc_reserve: f64,
+    reserve_warning: bool,
+    pending_btc_total: f64,
 }
 
 async fn api_health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
     let reserve = state.p2p_state.reserve.lock().await;
+    let pending_total = state.db.get_pending_total_btc().unwrap_or(0.0);
+    let reserve_warning = pending_total > 0.0 && reserve.btc_reserve < pending_total * 1.2;
+    if reserve_warning {
+        tracing::warn!(
+            btc_reserve = reserve.btc_reserve,
+            pending_btc = pending_total,
+            "BTC reserve below 1.2x pending total"
+        );
+    }
     Json(HealthResponse {
         node_id: state.config.node_id.clone(),
         version: state.config.node_version.clone(),
@@ -159,6 +181,8 @@ async fn api_health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> 
         chains: vec!["TRC20".into(), "BEP20".into()],
         uptime_secs: state.uptime_start.elapsed().as_secs(),
         btc_reserve: reserve.btc_reserve,
+        reserve_warning,
+        pending_btc_total: pending_total,
     })
 }
 
@@ -175,15 +199,17 @@ struct SetReserveResponse {
 
 async fn api_set_reserve(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(body): Json<SetReserveBody>,
-) -> Json<SetReserveResponse> {
+) -> Result<Json<SetReserveResponse>> {
+    require_auth(&state.config, &headers)?;
     let mut reserve = state.p2p_state.reserve.lock().await;
     reserve.btc_reserve = body.btc_reserve;
     tracing::info!(btc_reserve = body.btc_reserve, "BTC reserve updated");
-    Json(SetReserveResponse {
+    Ok(Json(SetReserveResponse {
         btc_reserve: body.btc_reserve,
         message: "BTC reserve updated".into(),
-    })
+    }))
 }
 
 #[derive(Serialize)]
@@ -222,8 +248,10 @@ struct P2pRedirectResponse {
 
 async fn p2p_redirect_handler(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(body): Json<P2pRedirectBody>,
-) -> Json<P2pRedirectResponse> {
+) -> Result<Json<P2pRedirectResponse>> {
+    require_auth(&state.config, &headers)?;
     let reserve = state.p2p_state.reserve.lock().await;
     let required_btc = body.usdt_amount / 100_000.0;
 
@@ -233,18 +261,18 @@ async fn p2p_redirect_handler(
             chain = %body.chain, to = %body.user_btc_address,
             "Accepting redirect"
         );
-        Json(P2pRedirectResponse {
+        Ok(Json(P2pRedirectResponse {
             accepted: true,
             message: "Redirect accepted, processing swap".into(),
-        })
+        }))
     } else {
-        Json(P2pRedirectResponse {
+        Ok(Json(P2pRedirectResponse {
             accepted: false,
             message: format!(
                 "Insufficient reserve: have {:.8} BTC, need {:.8} BTC",
                 reserve.btc_reserve, required_btc
             ),
-        })
+        }))
     }
 }
 
@@ -379,6 +407,30 @@ async fn api_get_exchange(
 
 async fn exchange_page() -> Html<&'static str> {
     Html(include_str!("../templates/exchange.html"))
+}
+
+#[derive(Deserialize)]
+struct ForceApproveBody {
+    tx_hash: String,
+    chain: String,
+}
+
+#[derive(Serialize)]
+struct ForceApproveResponse {
+    accepted: bool,
+    message: String,
+}
+
+async fn api_force_approve(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(body): Json<ForceApproveBody>,
+) -> Json<ForceApproveResponse> {
+    if let Err(e) = require_auth(&state.config, &headers) {
+        return Json(ForceApproveResponse { accepted: false, message: e.to_string() });
+    }
+    tracing::warn!(tx = %body.tx_hash, chain = %body.chain, "Admin force-approved deposit");
+    Json(ForceApproveResponse { accepted: true, message: "Deposit force-approved, will be processed on next monitor cycle".into() })
 }
 
 impl axum::response::IntoResponse for Kum4Error {

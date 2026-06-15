@@ -9,6 +9,11 @@ use crate::error::{Kum4Error, Result};
 use crate::price::Prices;
 
 #[allow(dead_code)]
+const MAX_RETRIES: u32 = 3;
+#[allow(dead_code)]
+const RETRY_DELAY_MS: u64 = 1000;
+
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UtxoEntry {
     pub txid: String,
@@ -16,6 +21,7 @@ pub struct UtxoEntry {
     pub value: u64,
     pub address: String,
     pub script_pubkey: String,
+    pub confirmed: bool,
 }
 
 #[allow(dead_code)]
@@ -28,6 +34,32 @@ pub struct BitcoinTxBuilder {
 impl BitcoinTxBuilder {
     pub fn new(network: Network) -> Self {
         BitcoinTxBuilder { network, client: reqwest::Client::new() }
+    }
+
+    pub async fn fetch_utxos(client: &reqwest::Client, mempool_url: &str, address: &str) -> Result<Vec<UtxoEntry>> {
+        let url = format!("{}/api/address/{}/utxo", mempool_url.trim_end_matches('/'), address);
+        let resp = Self::retry(|| async {
+            client.get(&url).send().await.map_err(|e| Kum4Error::Network(e.to_string()))
+        }).await?;
+        let data: Vec<serde_json::Value> = resp.json().await.map_err(|e| Kum4Error::Network(e.to_string()))?;
+        let mut utxos = Vec::new();
+        for item in data {
+            let txid = item["txid"].as_str().unwrap_or("").to_string();
+            let vout = item["vout"].as_u64().unwrap_or(0) as u32;
+            let value = item["value"].as_u64().unwrap_or(0);
+            let status = &item["status"];
+            if txid.is_empty() || value == 0 { continue; }
+            utxos.push(UtxoEntry {
+                txid,
+                vout,
+                value,
+                address: address.to_string(),
+                script_pubkey: "".into(),
+                confirmed: status["confirmed"].as_bool().unwrap_or(false),
+            });
+        }
+        utxos.sort_by_key(|u| std::cmp::Reverse(u.value));
+        Ok(utxos)
     }
 
     pub fn estimate_tx_vbytes(input_count: usize, output_count: usize) -> u64 {
@@ -143,9 +175,10 @@ impl BitcoinTxBuilder {
         buf.len() as u64
     }
 
-    pub async fn broadcast_tx(&self, tx_hex: String) -> Result<String> {
+    pub async fn broadcast_tx(&self, tx_hex: String, mempool_url: &str) -> Result<String> {
+        let url = format!("{}/api/tx", mempool_url.trim_end_matches('/'));
         let resp = self.client
-            .post("https://mempool.space/api/tx")
+            .post(&url)
             .header("Content-Type", "text/plain")
             .body(tx_hex)
             .send()
@@ -155,6 +188,46 @@ impl BitcoinTxBuilder {
             return Err(Kum4Error::Network(format!("Broadcast failed: {txid}")));
         }
         Ok(txid.trim().to_string())
+    }
+
+    pub async fn broadcast_tx_with_client(
+        client: &reqwest::Client,
+        mempool_url: &str,
+        tx_hex: String,
+    ) -> Result<String> {
+        let url = format!("{}/api/tx", mempool_url.trim_end_matches('/'));
+        let resp = client
+            .post(&url)
+            .header("Content-Type", "text/plain")
+            .body(tx_hex)
+            .send()
+            .await?;
+        let txid = resp.text().await?;
+        if txid.len() < 10 {
+            return Err(Kum4Error::Network(format!("Broadcast failed: {txid}")));
+        }
+        Ok(txid.trim().to_string())
+    }
+
+    async fn retry<F, Fut, T>(f: F) -> Result<T>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        let mut last_err = None;
+        for attempt in 0..MAX_RETRIES {
+            match f().await {
+                Ok(val) => return Ok(val),
+                Err(e) => {
+                    tracing::warn!("Attempt {}/{} failed: {e}", attempt + 1, MAX_RETRIES);
+                    last_err = Some(e);
+                    if attempt + 1 < MAX_RETRIES {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(RETRY_DELAY_MS)).await;
+                    }
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| Kum4Error::Network("Retry exhausted".into())))
     }
 }
 
@@ -172,9 +245,9 @@ mod tests {
     #[test]
     fn test_select_utxos() {
         let utxos = vec![
-            UtxoEntry { txid: "a".into(), vout: 0, value: 10_000, address: "".into(), script_pubkey: "".into() },
-            UtxoEntry { txid: "b".into(), vout: 0, value: 50_000, address: "".into(), script_pubkey: "".into() },
-            UtxoEntry { txid: "c".into(), vout: 0, value: 100_000, address: "".into(), script_pubkey: "".into() },
+            UtxoEntry { txid: "a".into(), vout: 0, value: 10_000, address: "".into(), script_pubkey: "".into(), confirmed: true },
+            UtxoEntry { txid: "b".into(), vout: 0, value: 50_000, address: "".into(), script_pubkey: "".into(), confirmed: true },
+            UtxoEntry { txid: "c".into(), vout: 0, value: 100_000, address: "".into(), script_pubkey: "".into(), confirmed: true },
         ];
         let (selected, total) = BitcoinTxBuilder::select_utxos(&utxos, 75_000);
         assert_eq!(selected.len(), 1);
@@ -192,9 +265,9 @@ mod tests {
     #[test]
     fn test_select_utxos_multiple() {
         let utxos = vec![
-            UtxoEntry { txid: "a".into(), vout: 0, value: 10_000, address: "".into(), script_pubkey: "".into() },
-            UtxoEntry { txid: "b".into(), vout: 0, value: 5_000, address: "".into(), script_pubkey: "".into() },
-            UtxoEntry { txid: "c".into(), vout: 0, value: 3_000, address: "".into(), script_pubkey: "".into() },
+            UtxoEntry { txid: "a".into(), vout: 0, value: 10_000, address: "".into(), script_pubkey: "".into(), confirmed: true },
+            UtxoEntry { txid: "b".into(), vout: 0, value: 5_000, address: "".into(), script_pubkey: "".into(), confirmed: true },
+            UtxoEntry { txid: "c".into(), vout: 0, value: 3_000, address: "".into(), script_pubkey: "".into(), confirmed: true },
         ];
         let (selected, total) = BitcoinTxBuilder::select_utxos(&utxos, 12_000);
         assert_eq!(selected.len(), 2);

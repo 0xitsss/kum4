@@ -36,6 +36,14 @@ impl Database {
         self.tree("deposits")
     }
 
+    pub fn manual_reviews(&self) -> Result<Tree> {
+        self.tree("manual_review")
+    }
+
+    pub fn pending_tx(&self) -> Result<Tree> {
+        self.tree("pending_tx")
+    }
+
     pub fn is_tx_processed(&self, tx_hash: &str) -> Result<bool> {
         let tree = self.tx_hashes()?;
         Ok(tree.contains_key(tx_hash.as_bytes())?)
@@ -79,6 +87,7 @@ impl Database {
         Ok(next)
     }
 
+    #[allow(dead_code)]
     pub fn current_address(&self, chain: &str) -> Result<Option<String>> {
         let tree = self.tree("current_address")?;
         Ok(tree
@@ -86,6 +95,7 @@ impl Database {
             .map(|v| String::from_utf8_lossy(&v).to_string()))
     }
 
+    #[allow(dead_code)]
     pub fn set_current_address(&self, chain: &str, address: &str) -> Result<()> {
         let tree = self.tree("current_address")?;
         tree.insert(chain.as_bytes(), address.as_bytes())?;
@@ -179,6 +189,146 @@ impl Database {
         } else {
             Ok(false)
         }
+    }
+
+    pub fn add_manual_review(
+        &self,
+        tx_hash: &str,
+        chain: &str,
+        from_addr: &str,
+        to_addr: &str,
+        got_amount: f64,
+        expected_amount: f64,
+    ) -> Result<()> {
+        let tree = self.manual_reviews()?;
+        let entry = serde_json::json!({
+            "tx_hash": tx_hash,
+            "chain": chain,
+            "from_address": from_addr,
+            "to_address": to_addr,
+            "got_amount": got_amount,
+            "expected_amount": expected_amount,
+            "timestamp": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+            "resolved": false,
+        });
+        tree.insert(tx_hash.as_bytes(), serde_json::to_vec(&entry)?)?;
+        tree.flush()?;
+        Ok(())
+    }
+
+    pub fn get_manual_reviews(&self) -> Result<Vec<serde_json::Value>> {
+        let tree = self.manual_reviews()?;
+        let mut result = Vec::new();
+        for entry in tree.iter() {
+            let (_, value) = entry?;
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&value) {
+                if v["resolved"] == serde_json::json!(false) {
+                    result.push(v);
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    pub fn add_pending_tx(
+        &self,
+        tx_hash: &str,
+        chain: &str,
+        block_number: u64,
+        deposit_address: &str,
+        from_address: &str,
+        usdt_amount: f64,
+    ) -> Result<()> {
+        let tree = self.pending_tx()?;
+        let entry = serde_json::json!({
+            "tx_hash": tx_hash,
+            "chain": chain,
+            "block_number": block_number,
+            "deposit_address": deposit_address,
+            "from_address": from_address,
+            "usdt_amount": usdt_amount,
+            "confirmed": false,
+            "created_at": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+        });
+        tree.insert(tx_hash.as_bytes(), serde_json::to_vec(&entry)?)?;
+        tree.flush()?;
+        Ok(())
+    }
+
+    pub fn get_pending_txs(&self) -> Result<Vec<serde_json::Value>> {
+        let tree = self.pending_tx()?;
+        let mut result = Vec::new();
+        for entry in tree.iter() {
+            let (_, value) = entry?;
+            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&value) {
+                if v["confirmed"] == serde_json::json!(false) {
+                    result.push(v);
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    pub fn mark_pending_tx_confirmed(&self, tx_hash: &str) -> Result<()> {
+        let tree = self.pending_tx()?;
+        if let Some(bytes) = tree.get(tx_hash.as_bytes())? {
+            let mut v: serde_json::Value = serde_json::from_slice(&bytes)?;
+            v["confirmed"] = serde_json::json!(true);
+            tree.insert(tx_hash.as_bytes(), serde_json::to_vec(&v)?)?;
+            tree.flush()?;
+        }
+        Ok(())
+    }
+
+    pub fn delete_expired_exchanges(&self, older_than_secs: u64) -> Result<u64> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let cutoff = now.saturating_sub(older_than_secs);
+        let tree = self.tree("exchanges")?;
+        let mut removed = 0u64;
+        let to_remove: Vec<String> = tree
+            .iter()
+            .filter_map(|entry| {
+                let (key, value) = entry.ok()?;
+                let req: ExchangeRequest = serde_json::from_slice(&value).ok()?;
+                if req.expires_at < cutoff && req.status == "expired" {
+                    String::from_utf8(key.to_vec()).ok()
+                } else {
+                    None
+                }
+            })
+            .collect();
+        for key in &to_remove {
+            tree.remove(key.as_bytes())?;
+            removed += 1;
+        }
+        if removed > 0 {
+            tree.flush()?;
+        }
+        Ok(removed)
+    }
+
+    pub fn get_pending_total_btc(&self) -> Result<f64> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let tree = self.tree("exchanges")?;
+        let mut total = 0.0;
+        for entry in tree.iter() {
+            let (_, value) = entry?;
+            let req: ExchangeRequest = serde_json::from_slice(&value)?;
+            if req.status == "pending" && req.expires_at > now {
+                if let Some(btc) = req.btc_amount {
+                    total += btc;
+                }
+            }
+        }
+        Ok(total)
     }
 
     pub fn set_exchange_amounts(

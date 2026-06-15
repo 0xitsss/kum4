@@ -1,6 +1,6 @@
 [package]
 name = "kum4"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 
 [dependencies]
@@ -33,6 +33,7 @@ twofish = "0.7"
 cipher = "0.4"
 whirlpool = "0.10"
 rpassword = "7"
+teloxide = "0.17"
 
 [dev-dependencies]
 tempfile = "3"
