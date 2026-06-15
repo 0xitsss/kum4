@@ -6,6 +6,7 @@ use axum::response::Html;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use crate::config::Config;
 use crate::database::Database;
@@ -40,6 +41,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         // .route("/api/addresses", get(api_addresses))
         .route("/api/calculate", post(api_calculate))
         .route("/api/health", get(api_health))
+        .route("/api/p2p/ping", get(p2p_ping_handler))
         .route("/api/p2p/reserve", get(p2p_reserve_handler))
         .route("/api/p2p/redirect", post(p2p_redirect_handler))
         .route("/api/reserve", post(api_set_reserve))
@@ -210,6 +212,10 @@ async fn api_set_reserve(
         btc_reserve: body.btc_reserve,
         message: "BTC reserve updated".into(),
     }))
+}
+
+async fn p2p_ping_handler(State(state): State<Arc<AppState>>) -> Json<Value> {
+    Json(json!({ "status": "ok", "peer_id": state.peer_id }))
 }
 
 #[derive(Serialize)]
