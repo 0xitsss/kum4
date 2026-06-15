@@ -8,6 +8,7 @@ mod monitor;
 mod p2p;
 mod price;
 mod rebalance;
+mod reputation;
 mod telegram_bot;
 mod tor_client;
 mod wallet;
