@@ -64,7 +64,7 @@ fn format_utxo_summary(utxos: &[UtxoJson], confirmed_sats: u64, unconfirmed_sats
     let confirmed_count = utxos.iter().filter(|u| u.status.confirmed).count();
     let unconfirmed_count = utxos.iter().filter(|u| !u.status.confirmed).count();
     format!(
-        "Balance: `{:.8}` BTC\nUTXOs: {} confirmed, {} unconfirmed",
+        "Balance: <code>{:.8}</code> BTC\nUTXOs: {} confirmed, {} unconfirmed",
         sats_to_btc(confirmed_sats + unconfirmed_sats),
         confirmed_count,
         unconfirmed_count,
@@ -93,11 +93,11 @@ fn fmt_time(ts: u64) -> String {
 fn main_menu_kb() -> InlineKeyboardMarkup {
     let mut kb: Vec<Vec<InlineKeyboardButton>> = Vec::new();
     let items = [
-        ("📊 Dashboard", "menu:dashboard"),
-        ("💱 Exchanges", "menu:exchanges"),
-        ("🏦 BTC Reserve", "menu:reserve"),
-        ("⚙️ System / Health", "menu:system"),
-        ("🔍 Manual Reviews", "menu:reviews"),
+        ("📊 Dashboard", "menu_dashboard"),
+        ("💱 Exchanges", "menu_exchanges"),
+        ("🏦 BTC Reserve", "menu_reserve"),
+        ("⚙️ System / Health", "menu_system"),
+        ("🔍 Manual Reviews", "menu_reviews"),
     ];
     for (text, cb) in &items {
         kb.push(vec![InlineKeyboardButton::callback(*text, cb.to_string())]);
@@ -107,13 +107,13 @@ fn main_menu_kb() -> InlineKeyboardMarkup {
 
 fn back_kb() -> InlineKeyboardMarkup {
     let kb = vec![
-        vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu:back")]
+        vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu_back")]
     ];
     InlineKeyboardMarkup::new(kb)
 }
 
 fn main_menu_text() -> String {
-    "🏠 *Kumquad Admin*\n\nDashboard, exchanges, BTC reserve — all in one place.".into()
+    "🏠 <b>Kumquad Admin</b>\n\nDashboard, exchanges, BTC reserve — all in one place.".into()
 }
 
 fn is_admin(msg: &Message, state: &BotState) -> bool {
@@ -137,13 +137,13 @@ enum CallbackAction {
 }
 
 fn parse_callback(data: &str) -> CallbackAction {
-    if let Some(id) = data.strip_prefix("exch:") {
+    if let Some(id) = data.strip_prefix("exch_") {
         CallbackAction::Exchange(id.to_string())
-    } else if let Some(id) = data.strip_prefix("resolve_review:") {
+    } else if let Some(id) = data.strip_prefix("resolve_review_") {
         CallbackAction::ResolveReview(id.to_string())
-    } else if let Some(id) = data.strip_prefix("resolve:") {
+    } else if let Some(id) = data.strip_prefix("resolve_") {
         CallbackAction::Resolve(id.to_string())
-    } else if let Some(target) = data.strip_prefix("menu:") {
+    } else if let Some(target) = data.strip_prefix("menu_") {
         CallbackAction::Menu(target.to_string())
     } else {
         CallbackAction::Menu("unknown".into())
@@ -153,9 +153,9 @@ fn parse_callback(data: &str) -> CallbackAction {
 fn build_exchange_kb(exchange: &crate::database::ExchangeRequest) -> InlineKeyboardMarkup {
     let mut kb: Vec<Vec<InlineKeyboardButton>> = Vec::new();
     let mut row = Vec::new();
-    row.push(InlineKeyboardButton::callback("📋 Details", format!("exch:{}", exchange.id)));
+    row.push(InlineKeyboardButton::callback("📋 Details", format!("exch_{}", exchange.id)));
     if exchange.status == "pending" || exchange.status == "deposit_detected" || exchange.status == "error" {
-        row.push(InlineKeyboardButton::callback("🔄 Resolve", format!("resolve:{}", exchange.id)));
+        row.push(InlineKeyboardButton::callback("🔄 Resolve", format!("resolve_{}", exchange.id)));
     }
     kb.push(row);
     InlineKeyboardMarkup::new(kb)
@@ -176,7 +176,7 @@ fn exchange_summary(exchange: &crate::database::ExchangeRequest) -> String {
         _ => "❓",
     };
     format!(
-        "{icon} `{id}` • {chain}\n{usdt} USDT → {btc} BTC\n{status}",
+        "{icon} <code>{id}</code> • {chain}\n{usdt} USDT → {btc} BTC\n{status}",
         icon = status_icon,
         id = exchange.id.chars().take(12).collect::<String>(),
         chain = exchange.chain,
@@ -199,16 +199,15 @@ fn exchange_detail(exchange: &crate::database::ExchangeRequest) -> String {
         _ => "❓",
     };
     format!(
-        "┌ *Exchange* `{id}`\n\
-         ├ Chain: `{chain}`\n\
+        "┌ <b>Exchange</b> <code>{id}</code>\n\
+         ├ Chain: <code>{chain}</code>\n\
          ├ Status: {icon} {status}\n\
-         ├ USDT: `{usdt}`\n\
-         ├ BTC: `{btc}`\n\
-         ├ Deposit: `{deposit}`\n\
-         ├ Destination: `{dest}`\n\
+         ├ USDT: <code>{usdt}</code>\n\
+         ├ BTC: <code>{btc}</code>\n\
+         ├ Deposit: <code>{deposit}</code>\n\
+         ├ Destination: <code>{dest}</code>\n\
          ├ Created: {created}\n\
-         └ Expires: {expires}",
-        id = exchange.id,
+         └ Expires: {expires}",        id = exchange.id,
         chain = exchange.chain,
         icon = status_icon,
         status = exchange.status,
@@ -225,10 +224,10 @@ fn build_system_text(version: &str, node_id: &str, tron_ok: bool, bsc_ok: bool) 
     let tron_icon = if tron_ok { "✅" } else { "❌" };
     let bsc_icon = if bsc_ok { "✅" } else { "❌" };
     format!(
-        "⚙️ *System*\n\n\
+        "⚙️ <b>System</b>\n\n\
          Bot: ✅ running\n\
-         Version: `{}`\n\
-         Node: `{}`\n\
+         Version: <code>{}</code>\n\
+         Node: <code>{}</code>\n\
          TRON RPC: {}\n\
          BSC RPC:  {}",
         version, node_id, tron_icon, bsc_icon,
@@ -249,7 +248,7 @@ fn build_reserve_text(address: &str, utxos: &[UtxoJson], confirmed_sats: u64, un
         } else {
             " (unconfirmed)".into()
         };
-        utxo_lines.push(format!("{}. `{}` — {:.8} BTC{}", i + 1, short_txid, sats_to_btc(u.value), conf));
+        utxo_lines.push(format!("{}. <code>{}</code> — {:.8} BTC{}", i + 1, short_txid, sats_to_btc(u.value), conf));
     }
     if utxos.len() > 10 {
         utxo_lines.push(format!("... and {} more", utxos.len() - 10));
@@ -261,16 +260,16 @@ fn build_reserve_text(address: &str, utxos: &[UtxoJson], confirmed_sats: u64, un
     };
     let low = reserve_is_low(sats_to_btc(utxo_total), pending_btc);
     let warning = if low {
-        format!("\n⚠️ *Warning:* Reserve below 1.2× pending ({:.8} BTC needed)!", pending_btc * 1.2)
+        format!("\n⚠️ <b>Warning:</b> Reserve below 1.2× pending ({:.8} BTC needed)!", pending_btc * 1.2)
     } else {
         "\n✅ Reserve adequate.".into()
     };
     format!(
-        "🏦 *BTC Reserve*\n\n\
-         Address: `{addr}`\n\
-         Balance: `{bal:.8}` BTC\n\
+        "🏦 <b>BTC Reserve</b>\n\n\
+         Address: <code>{addr}</code>\n\
+         Balance: <code>{bal:.8}</code> BTC\n\
          UTXOs: {conf} confirmed, {unconf} unconfirmed\n\
-         Pending outgoing: `{pend:.8}` BTC\n\n\
+         Pending outgoing: <code>{pend:.8}</code> BTC\n\n\
          {utxos}{warn}",
         addr = address, bal = balance,
         conf = confirmed_count, unconf = unconfirmed_count,
@@ -284,19 +283,19 @@ fn build_reviews_view(reviews: &[serde_json::Value]) -> (String, InlineKeyboardM
     }
     let mut lines: Vec<String> = Vec::new();
     let mut kb_rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
-    lines.push(format!("🔍 *Manual Reviews: {}*", reviews.len()));
+    lines.push(format!("🔍 <b>Manual Reviews: {}</b>", reviews.len()));
     for (i, r) in reviews.iter().enumerate() {
         let tx = r["tx_hash"].as_str().unwrap_or("?");
         let chain = r["chain"].as_str().unwrap_or("?");
         let got = r["got_amount"].as_f64().unwrap_or(0.0);
         let expected = r["expected_amount"].as_f64().unwrap_or(0.0);
         let short_tx: String = tx.chars().take(16).collect();
-        lines.push(format!("{}. `{}` {} — got {:.2}, expected {:.2}", i + 1, short_tx, chain, got, expected));
+        lines.push(format!("{}. <code>{}</code> {} — got {:.2}, expected {:.2}", i + 1, short_tx, chain, got, expected));
         kb_rows.push(vec![
-            InlineKeyboardButton::callback(format!("✅ Resolve: {}", short_tx), format!("resolve_review:{}", tx)),
+            InlineKeyboardButton::callback(format!("✅ Resolve: {}", short_tx), format!("resolve_review_{}", tx)),
         ]);
     }
-    kb_rows.push(vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu:back")]);
+    kb_rows.push(vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu_back")]);
     (lines.join("\n"), InlineKeyboardMarkup::new(kb_rows))
 }
 
@@ -308,9 +307,9 @@ fn build_dashboard_text(tron_pending: usize, bsc_pending: usize, n_reviews: usiz
         String::new()
     };
     format!(
-        "📊 *Dashboard*\n\n\
+        "📊 <b>Dashboard</b>\n\n\
          💱 Pending exchanges: {total} (TRON: {tron}, BSC: {bsc})\n\
-         🏦 BTC Reserve: `{btc:.8}` BTC\n\
+         🏦 BTC Reserve: <code>{btc:.8}</code> BTC\n\
          🔍 Manual reviews: {n}{warning}\n\
          🩺 System: ✅ running",
         total = total, tron = tron_pending, bsc = bsc_pending,
@@ -323,7 +322,7 @@ fn build_exchanges_page_text(exchanges: &[crate::database::ExchangeRequest], pag
         return ("✅ No exchanges to show.".into(), false, false);
     }
     let lines: Vec<String> = exchanges.iter().map(exchange_summary).collect();
-    let text = format!("💱 *Exchanges (стр {}/{})*\n\n{}", page, total_pages, lines.join("\n\n"));
+    let text = format!("💱 <b>Exchanges (page {}/{})</b>\n\n{}", page, total_pages, lines.join("\n\n"));
     let has_prev = page > 1;
     let has_next = page < total_pages;
     (text, has_next, has_prev)
@@ -347,7 +346,7 @@ async fn cmd_dashboard(bot: Bot, msg: Message, state: Arc<BotState>) -> Result<(
     let balance = sats_to_btc(confirmed + unconfirmed);
     let text = build_dashboard_text(tron, bsc, reviews, balance);
     bot.send_message(msg.chat.id, text)
-        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .parse_mode(teloxide::types::ParseMode::Html)
         .reply_markup(back_kb())
         .await?;
     Ok(())
@@ -359,7 +358,7 @@ async fn cmd_start(bot: Bot, msg: Message, state: Arc<BotState>) -> Result<()> {
         return Ok(());
     }
     bot.send_message(msg.chat.id, main_menu_text())
-        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .parse_mode(teloxide::types::ParseMode::Html)
         .reply_markup(main_menu_kb())
         .await?;
     Ok(())
@@ -393,19 +392,19 @@ async fn cmd_exchanges_page(bot: Bot, msg: Message, state: Arc<BotState>, page: 
     if has_prev || has_next {
         let mut row = Vec::new();
         if has_prev {
-            row.push(InlineKeyboardButton::callback("◀️", format!("menu:exchanges:p{}", page - 1)));
+            row.push(InlineKeyboardButton::callback("◀️", format!("menu_exchanges_p{}", page - 1)));
         }
         row.push(InlineKeyboardButton::callback(format!("{}/{}", page, total_pages.max(1)), "noop"));
         if has_next {
-            row.push(InlineKeyboardButton::callback("▶️", format!("menu:exchanges:p{}", page + 1)));
+            row.push(InlineKeyboardButton::callback("▶️", format!("menu_exchanges_p{}", page + 1)));
         }
         kb_rows.push(row);
     }
-    kb_rows.push(vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu:back")]);
+    kb_rows.push(vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu_back")]);
     let kb = InlineKeyboardMarkup::new(kb_rows);
 
     bot.send_message(msg.chat.id, text)
-        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .parse_mode(teloxide::types::ParseMode::Html)
         .reply_markup(kb)
         .await?;
     Ok(())
@@ -430,20 +429,20 @@ async fn show_exchanges_page(bot: &Bot, chat_id: ChatId, msg_id: Option<MessageI
     if has_prev || has_next {
         let mut row = Vec::new();
         if has_prev {
-            row.push(InlineKeyboardButton::callback("◀️", format!("menu:exchanges:p{}", page - 1)));
+            row.push(InlineKeyboardButton::callback("◀️", format!("menu_exchanges_p{}", page - 1)));
         }
         row.push(InlineKeyboardButton::callback(format!("{}/{}", page, total_pages.max(1)), "noop"));
         if has_next {
-            row.push(InlineKeyboardButton::callback("▶️", format!("menu:exchanges:p{}", page + 1)));
+            row.push(InlineKeyboardButton::callback("▶️", format!("menu_exchanges_p{}", page + 1)));
         }
         kb_rows.push(row);
     }
-    kb_rows.push(vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu:back")]);
+    kb_rows.push(vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu_back")]);
     let kb = InlineKeyboardMarkup::new(kb_rows);
 
     if let Some(mid) = msg_id {
         bot.edit_message_text(chat_id, mid, text)
-            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+            .parse_mode(teloxide::types::ParseMode::Html)
             .reply_markup(kb)
             .await?;
     }
@@ -467,7 +466,7 @@ async fn cmd_exchange(bot: Bot, msg: Message, state: Arc<BotState>, args: String
         Some(ex) => {
             let kb = build_exchange_kb(&ex);
             bot.send_message(msg.chat.id, exchange_detail(&ex))
-                .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                .parse_mode(teloxide::types::ParseMode::Html)
                 .reply_markup(kb)
                 .await?;
         }
@@ -492,7 +491,7 @@ async fn cmd_reserve(bot: Bot, msg: Message, state: Arc<BotState>) -> Result<()>
     ).await.unwrap_or((vec![], 0, 0));
     let text = build_reserve_text(&reserve_addr.to_string(), &utxos, confirmed, unconfirmed, pending_btc);
     bot.send_message(msg.chat.id, text)
-        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .parse_mode(teloxide::types::ParseMode::Html)
         .reply_markup(back_kb())
         .await?;
     Ok(())
@@ -514,7 +513,7 @@ async fn cmd_health(bot: Bot, msg: Message, state: Arc<BotState>) -> Result<()> 
         .send().await.is_ok();
     let text = build_system_text(env!("CARGO_PKG_VERSION"), &state.config.node_id, tron_ok, bsc_ok);
     bot.send_message(msg.chat.id, text)
-        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .parse_mode(teloxide::types::ParseMode::Html)
         .reply_markup(back_kb())
         .await?;
     Ok(())
@@ -566,9 +565,9 @@ async fn cmd_resolve(bot: Bot, msg: Message, state: Arc<BotState>, args: String)
                     match state.deposit_tx.send(deposit_event).await {
                         Ok(_) => {
                             bot.send_message(msg.chat.id, format!(
-                                "✅ *Resolved* `{}`\n\nActual USDT: `{:.2}`\nBTC to send: `{:.8}`\nDeposit event sent for processing.",
+                                "✅ <b>Resolved</b> <code>{}</code>\n\nActual USDT: <code>{:.2}</code>\nBTC to send: <code>{:.8}</code>\nDeposit event sent for processing.",
                                 tx_hash, got, btc_amount
-                            )).parse_mode(teloxide::types::ParseMode::MarkdownV2).await?;
+                            )).parse_mode(teloxide::types::ParseMode::Html).await?;
                         }
                         Err(e) => {
                             bot.send_message(msg.chat.id, format!("❌ Failed to send deposit event: {e}")).await?;
@@ -596,7 +595,7 @@ async fn cmd_reviews(bot: Bot, msg: Message, state: Arc<BotState>) -> Result<()>
     let reviews = state.db.get_manual_reviews().unwrap_or_default();
     let (text, kb) = build_reviews_view(&reviews);
     bot.send_message(msg.chat.id, text)
-        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .parse_mode(teloxide::types::ParseMode::Html)
         .reply_markup(kb)
         .await?;
     Ok(())
@@ -643,16 +642,16 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
                     let text = build_dashboard_text(tron, bsc, reviews, balance);
                     if let Some(mid) = msg_id {
                         bot.edit_message_text(chat_id, mid, text)
-                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                            .parse_mode(teloxide::types::ParseMode::Html)
                             .reply_markup(back_kb())
                             .await?;
                     }
                 }
-                "exchanges" | "exchanges:p1" => {
+                "exchanges" | "exchanges_p1" => {
                     show_exchanges_page(&bot, chat_id, msg_id, &state, 1).await?;
                 }
-                p if p.starts_with("exchanges:p") => {
-                    let page: usize = p.trim_start_matches("exchanges:p").parse().unwrap_or(1);
+                p if p.starts_with("exchanges_p") => {
+                    let page: usize = p.trim_start_matches("exchanges_p").parse().unwrap_or(1);
                     show_exchanges_page(&bot, chat_id, msg_id, &state, page).await?;
                 }
                 "reserve" => {
@@ -665,7 +664,7 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
                     let text = build_reserve_text(&reserve_addr.to_string(), &utxos, confirmed, unconfirmed, pending_btc);
                     if let Some(mid) = msg_id {
                         bot.edit_message_text(chat_id, mid, text)
-                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                            .parse_mode(teloxide::types::ParseMode::Html)
                             .reply_markup(back_kb())
                             .await?;
                     }
@@ -682,7 +681,7 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
                     let text = build_system_text(env!("CARGO_PKG_VERSION"), &state.config.node_id, tron_ok, bsc_ok);
                     if let Some(mid) = msg_id {
                         bot.edit_message_text(chat_id, mid, text)
-                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                            .parse_mode(teloxide::types::ParseMode::Html)
                             .reply_markup(back_kb())
                             .await?;
                     }
@@ -692,7 +691,7 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
                     let (text, kb) = build_reviews_view(&reviews);
                     if let Some(mid) = msg_id {
                         bot.edit_message_text(chat_id, mid, text)
-                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                            .parse_mode(teloxide::types::ParseMode::Html)
                             .reply_markup(kb)
                             .await?;
                     }
@@ -700,7 +699,7 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
                 "back" => {
                     if let Some(mid) = msg_id {
                         bot.edit_message_text(chat_id, mid, main_menu_text())
-                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                            .parse_mode(teloxide::types::ParseMode::Html)
                             .reply_markup(main_menu_kb())
                             .await?;
                     }
@@ -713,7 +712,7 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
                 let kb = build_exchange_kb(&ex);
                 if let Some(mid) = msg_id {
                     bot.edit_message_text(chat_id, mid, exchange_detail(&ex))
-                        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                        .parse_mode(teloxide::types::ParseMode::Html)
                         .reply_markup(kb)
                         .await?;
                 }
@@ -750,9 +749,9 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
                                 .await?;
                             if let Some(mid) = msg_id {
                                 let _ = bot.edit_message_text(chat_id, mid, format!(
-                                    "✅ *Resolved*\n\nExchange `{}`\nUSDT: `{:.2}` → BTC: `{:.8}`",
+                                    "✅ <b>Resolved</b>\n\nExchange <code>{}</code>\nUSDT: <code>{:.2}</code> → BTC: <code>{:.8}</code>",
                                     ex.id, usdt, btc_amount
-                                )).parse_mode(teloxide::types::ParseMode::MarkdownV2).await;
+                                )).parse_mode(teloxide::types::ParseMode::Html).await;
                             }
                         }
                         Err(e) => {
@@ -796,9 +795,9 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
                                     bot.answer_callback_query(q.id).text("✅ Resolved").await?;
                                     if let Some(mid) = msg_id {
                                         let _ = bot.edit_message_text(chat_id, mid, format!(
-                                            "✅ *Resolved* `{}`\n\nUSDT: `{:.2}` → BTC: `{:.8}`",
+                                            "✅ <b>Resolved</b> <code>{}</code>\n\nUSDT: <code>{:.2}</code> → BTC: <code>{:.8}</code>",
                                             tx_hash, got, btc_amount
-                                        )).parse_mode(teloxide::types::ParseMode::MarkdownV2).await;
+                                        )).parse_mode(teloxide::types::ParseMode::Html).await;
                                     }
                                 }
                                 Err(e) => {
@@ -956,7 +955,7 @@ mod tests {
         let rows = kb.inline_keyboard;
         assert_eq!(rows.len(), 5);
         assert!(rows[0][0].text.contains("Dashboard"));
-        assert_eq!(rows[0][0].kind, teloxide::types::InlineKeyboardButtonKind::CallbackData("menu:dashboard".into()));
+        assert_eq!(rows[0][0].kind, teloxide::types::InlineKeyboardButtonKind::CallbackData("menu_dashboard".into()));
         assert!(rows[4][0].text.contains("Reviews"));
     }
 
@@ -1096,24 +1095,24 @@ mod tests {
 
     #[test]
     fn test_parse_callback_menu() {
-        assert_eq!(parse_callback("menu:dashboard"), CallbackAction::Menu("dashboard".into()));
-        assert_eq!(parse_callback("menu:exchanges"), CallbackAction::Menu("exchanges".into()));
-        assert_eq!(parse_callback("menu:back"), CallbackAction::Menu("back".into()));
+        assert_eq!(parse_callback("menu_dashboard"), CallbackAction::Menu("dashboard".into()));
+        assert_eq!(parse_callback("menu_exchanges"), CallbackAction::Menu("exchanges".into()));
+        assert_eq!(parse_callback("menu_back"), CallbackAction::Menu("back".into()));
     }
 
     #[test]
     fn test_parse_callback_exch() {
-        assert_eq!(parse_callback("exch:abc123"), CallbackAction::Exchange("abc123".into()));
+        assert_eq!(parse_callback("exch_abc123"), CallbackAction::Exchange("abc123".into()));
     }
 
     #[test]
     fn test_parse_callback_resolve() {
-        assert_eq!(parse_callback("resolve:abc123"), CallbackAction::Resolve("abc123".into()));
+        assert_eq!(parse_callback("resolve_abc123"), CallbackAction::Resolve("abc123".into()));
     }
 
     #[test]
     fn test_parse_callback_resolve_review() {
-        assert_eq!(parse_callback("resolve_review:txhash123"), CallbackAction::ResolveReview("txhash123".into()));
+        assert_eq!(parse_callback("resolve_review_txhash123"), CallbackAction::ResolveReview("txhash123".into()));
     }
 
     #[test]
