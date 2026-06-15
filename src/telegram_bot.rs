@@ -292,7 +292,7 @@ fn build_reviews_view(reviews: &[serde_json::Value]) -> (String, InlineKeyboardM
         let short_tx: String = tx.chars().take(16).collect();
         lines.push(format!("{}. <code>{}</code> {} — got {:.2}, expected {:.2}", i + 1, short_tx, chain, got, expected));
         kb_rows.push(vec![
-            InlineKeyboardButton::callback(format!("✅ Resolve: {}", short_tx), format!("resolve_review_{}", tx)),
+            InlineKeyboardButton::callback(format!("✅ Resolve: {}", short_tx), format!("resolve_review_{}", i)),
         ]);
     }
     kb_rows.push(vec![InlineKeyboardButton::callback("🔙 Main Menu", "menu_back")]);
@@ -764,11 +764,13 @@ async fn callback_handler(bot: Bot, q: CallbackQuery, state: Arc<BotState>) -> R
                 }
             }
         }
-        CallbackAction::ResolveReview(tx_hash) => {
+        CallbackAction::ResolveReview(idx_str) => {
             let reviews = state.db.get_manual_reviews()?;
-            let review = reviews.iter().find(|r| r["tx_hash"].as_str().unwrap_or("") == tx_hash).cloned();
+            let idx: usize = idx_str.parse().unwrap_or(usize::MAX);
+            let review = reviews.get(idx).cloned();
             match review {
                 Some(r) => {
+                    let tx_hash = r["tx_hash"].as_str().unwrap_or("?").to_string();
                     let to_addr = r["to_address"].as_str().unwrap_or("");
                     let got = r["got_amount"].as_f64().unwrap_or(0.0);
                     let chain_str = r["chain"].as_str().unwrap_or("tron");
