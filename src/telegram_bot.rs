@@ -905,15 +905,15 @@ mod tests {
 
     #[test]
     fn test_pagination_bounds() {
-        let total = 13;
-        let per_page = 5;
-        let max_page = (total + per_page - 1) / per_page;
+        let total: usize = 13;
+        let per_page: usize = 5;
+        let max_page = total.div_ceil(per_page);
         assert_eq!(max_page, 3);
-        assert_eq!((1 as usize).clamp(1, max_page), 1);
-        assert_eq!((0 as usize).clamp(1, max_page), 1);
-        assert_eq!((3 as usize).clamp(1, max_page), 3);
-        assert_eq!((4 as usize).clamp(1, max_page), 3);
-        assert_eq!((5 as usize).clamp(1, max_page), 3);
+        assert_eq!(1_usize.clamp(1, max_page), 1);
+        assert_eq!(0_usize.clamp(1, max_page), 1);
+        assert_eq!(3_usize.clamp(1, max_page), 3);
+        assert_eq!(4_usize.clamp(1, max_page), 3);
+        assert_eq!(5_usize.clamp(1, max_page), 3);
     }
 
     #[test]
